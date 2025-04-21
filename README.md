@@ -14,8 +14,7 @@ A lightweight Discord bot that joins a voice channel, records speech, transcribe
 
 ## TODO
 
-- Better VAD (voice activity detection).
-- Hallucinates with noise (related to above).
+- Still needs small tweaks to VAD.
 - AI-based transcription summary.
 
 ## Requirements

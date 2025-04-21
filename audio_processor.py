@@ -1,12 +1,17 @@
+from __future__ import annotations
 import asyncio
 import queue
 import threading
 import numpy as np
+import librosa  # for silence trimming
 # Updated imports for Generics
 from typing import Optional, Dict, Any, Tuple, TypeAlias, Generic, TypeVar
 from transformers import Pipeline as WhisperPipeline
 from transformers import pipeline
-from scipy.signal import resample_poly
+
+# Module-level audio constants
+TARGET_SR = 16000  # expected incoming sample rate
+SILENCE_TOP_DB = 60  # threshold for trimming silence
 
 # TODO: Not used yet due to transformers + whisper bug.
 WHISPER_NO_SPEECH_THRESHOLD = 0.6
@@ -34,8 +39,6 @@ class AudioProcessor(Generic[MetadataT]):
     _input_queue: queue.Queue[Optional[AudioProcessingJob[MetadataT]]] # Use specific generic type
     _thread: Optional[threading.Thread]
     _stop_event: threading.Event
-    _target_sr: int = 16000
-    _discord_sr: int = 48000
     _pipeline_lock: threading.Lock
     _model_name: str
 
@@ -125,7 +128,7 @@ class AudioProcessor(Generic[MetadataT]):
                 # Unpack metadata (type MetadataT) and audio_data
                 metadata, audio_data = item
                 # Log generically or remove specific details
-                print(f"AudioProcessor thread: Processing job with metadata")
+                print(f"AudioProcessor thread: Processing job with metadata {metadata}...")
 
                 if not audio_data:
                     print(f"AudioProcessor thread: Skipping empty audio data.")
@@ -134,22 +137,20 @@ class AudioProcessor(Generic[MetadataT]):
 
                 # --- Perform processing (synchronously in this thread) ---
                 try:
-                    # Convert bytes to numpy array (int16 stereo)
-                    audio_np_stereo: np.ndarray = np.frombuffer(audio_data, dtype=np.int16).reshape(-1, 2)
-                    # Convert int16 to float32 and normalize, then mono
-                    audio_float32_stereo: np.ndarray = audio_np_stereo.astype(np.float32) / 32768.0
-                    audio_float32_48k: np.ndarray = np.mean(audio_float32_stereo, axis=1)
-
-                    # Resample
-                    if self._discord_sr != self._target_sr:
-                        audio_float32_resampled = resample_poly(audio_float32_48k, self._target_sr, self._discord_sr)
-                    else:
-                        audio_float32_resampled = audio_float32_48k
+                    # audio_data is 16kHz mono PCM int16 bytes
+                    audio_np: np.ndarray = np.frombuffer(audio_data, dtype=np.int16)
+                    # normalize to float32 in [-1,1]
+                    audio_np: np.ndarray = audio_np.astype(np.float32) / 32768.0
+                    # Trim leading/trailing silence
+                    audio_np, _ = librosa.effects.trim(
+                        audio_np,
+                        top_db=SILENCE_TOP_DB
+                    )
 
                     # Prepare input
                     pipeline_input = {
-                        "raw": audio_float32_resampled,
-                        "sampling_rate": self._target_sr,
+                        "raw": audio_np,
+                        "sampling_rate": TARGET_SR,
                     }
 
                     if self._pipeline is None:
@@ -162,10 +163,10 @@ class AudioProcessor(Generic[MetadataT]):
                     result: AudioPipelineOutput = self._pipeline(
                         pipeline_input,
                         generate_kwargs={
-                            "language": "english",
-                            "task": "transcribe",
+                            # "language": "english",
+                            # "task": "transcribe",
                             "return_timestamps": True,
-                            "temperature": 0.1,
+                            "temperature": 0.05,
                             # TODO: Adding these parameters causes whisper to break atm.
                             # Maybe when https://github.com/huggingface/transformers/pull/36809 is merged, we can use them.
                             # "no_speech_threshold": WHISPER_NO_SPEECH_THRESHOLD,

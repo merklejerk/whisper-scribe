@@ -130,7 +130,6 @@ class STTBot(commands.Bot):
             sink = SilenceSink(
                 vc=vc,
                 capture_queue=self.capture_queue, # Pass capture queue
-                client=self # Pass the bot instance
             )
             self.current_sink = sink
 
@@ -282,29 +281,40 @@ class STTBot(commands.Bot):
 
         print("Ready. Use '!join' in a text channel to have me join your voice channel.")
 
+    async def _add_log_entry(
+            self,
+            category: str,
+            user_id: int,
+            channel_id: int,
+            user_name: Optional[str],
+            content: str,
+            timestamp: datetime.datetime,
+        ) -> None:
+        """Helper to format and log entries."""
+        ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+        print(f"{user_id}: {content}")
+        await self.log_manager.add_log_entry(content, channel_id, user_id, user_name)
+
     async def _process_transcription_queue(self):
         """Consumes transcription results from the queue and logs them."""
         print("Transcription consumer task started.")
         try:
             while True:
-                # Unpack metadata now includes capture timestamp
                 (user_id, channel_id, capture_time), transcription = await self.transcription_queue.get()
                 try:
-                    # Use the audio capture timestamp instead of processing time
-                    timestamp: str = capture_time.strftime("%Y-%m-%d %H:%M:%S UTC")
-                    username = f"User ID {user_id}"
-                    log_entry: str = f"[{timestamp}] (Voice) {username}: {transcription}"
-                    print(f"Bot: Logging transcription for {username} to channel {channel_id}\n\t{log_entry}")
                     # Determine user name from cache if possible
                     user_obj = self.get_user(user_id)
-                    user_name = None
-                    if user_obj:
-                        print(user_obj)
-                        user_name = getattr(user_obj, 'display_name', None) or getattr(user_obj, 'name', None)
-                    # Pass channel_id, user_id and user_name to add_log_entry
-                    await self.log_manager.add_log_entry(log_entry, channel_id, user_id, user_name)
+                    user_name = getattr(user_obj, 'display_name', None) if user_obj else None
+                    # Delegate formatting and logging
+                    await self._add_log_entry(
+                        "Voice",
+                        user_id,
+                        channel_id,
+                        user_name or "unknown",
+                        transcription,
+                        capture_time
+                    )
                 except Exception as e:
-                    # Log error with user_id if available from unpacking
                     uid_for_log = user_id if 'user_id' in locals() else "unknown user"
                     print(f"Error logging transcription for user {uid_for_log}: {e}")
                 finally:
@@ -356,11 +366,15 @@ class STTBot(commands.Bot):
 
         # Only log messages in the text channel with the same ID as the last voice channel
         if message.channel.id == self.last_voice_channel_id:
-            timestamp: str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
-            log_entry: str = f"[{timestamp}] (Text) {message.author.display_name}: {message.content}"
-            print(log_entry)
-            # Use LogManager's method, include user info
-            await self.log_manager.add_log_entry(log_entry, message.channel.id, message.author.id, message.author.display_name)
+            # Delegate formatting and logging
+            await self._add_log_entry(
+                "Text",
+                message.author.id,
+                message.channel.id,
+                message.author.display_name,
+                message.content,
+                datetime.datetime.now(datetime.timezone.utc)
+            )
 
     async def close_and_cleanup(self) -> None:
         """Cleanup logic to run when the bot is shutting down."""
