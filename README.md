@@ -42,6 +42,13 @@ A lightweight Discord bot that joins a voice channel, records speech, transcribe
    # Optional: Whisper model name (e.g., "openai/whisper-small", default: "openai/whisper-large-v3")
    WHISPER_MODEL="openai/whisper-base"
    ```
+4. The latest release of `py-cord` has a bug when decoding voice streams that will regularly crash the voice client loop. For now, you can manually mitigate it by finding `site-packages/discord/voice-client.py` and applying the edit:
+   ```diff
+   615c615
+   <         if data[0] == 0xBE and data[1] == 0xDE and len(data) > 4:
+   ---
+   >         if len(data) and data[0] == 0xBE and data[1] == 0xDE and len(data) > 4:
+   ```
 
 ## Usage
 

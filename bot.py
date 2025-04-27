@@ -283,17 +283,28 @@ class STTBot(commands.Bot):
 
     async def _add_log_entry(
             self,
+            *,
             category: str,
             user_id: int,
+            user_name: Optional[str] = None,
             channel_id: int,
-            user_name: Optional[str],
             content: str,
             timestamp: datetime.datetime,
         ) -> None:
-        """Helper to format and log entries."""
-        ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
-        print(f"{user_id}: {content}")
-        await self.log_manager.add_log_entry(content, channel_id, user_id, user_name)
+        user_obj = self.get_user(user_id)
+        if user_obj is None:
+            user_obj = await self.fetch_user(user_id)
+        if user_obj is None:
+            user_obj = await self.fetch_user(user_id)
+        user_name = user_obj.display_name if user_obj else None
+        print(f"{user_name if user_name else user_id}: {content}")
+        await self.log_manager.add_entry(
+            content=content,
+            channel_id=channel_id,
+            user_id=user_id,
+            user_name=user_name,
+            timestamp=timestamp,
+        )
 
     async def _process_transcription_queue(self):
         """Consumes transcription results from the queue and logs them."""
@@ -302,17 +313,12 @@ class STTBot(commands.Bot):
             while True:
                 (user_id, channel_id, capture_time), transcription = await self.transcription_queue.get()
                 try:
-                    # Determine user name from cache if possible
-                    user_obj = self.get_user(user_id)
-                    user_name = getattr(user_obj, 'display_name', None) if user_obj else None
-                    # Delegate formatting and logging
                     await self._add_log_entry(
-                        "Voice",
-                        user_id,
-                        channel_id,
-                        user_name or "unknown",
-                        transcription,
-                        capture_time
+                        category="Voice",
+                        user_id=user_id,
+                        channel_id=channel_id,
+                        content=transcription,
+                        timestamp=capture_time,
                     )
                 except Exception as e:
                     uid_for_log = user_id if 'user_id' in locals() else "unknown user"
@@ -368,12 +374,12 @@ class STTBot(commands.Bot):
         if message.channel.id == self.last_voice_channel_id:
             # Delegate formatting and logging
             await self._add_log_entry(
-                "Text",
-                message.author.id,
-                message.channel.id,
-                message.author.display_name,
-                message.content,
-                datetime.datetime.now(datetime.timezone.utc)
+                category="Text",
+                user_id=message.author.id,
+                channel_id=message.channel.id,
+                user_name=message.author.display_name,
+                content=message.content,
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
             )
 
     async def close_and_cleanup(self) -> None:

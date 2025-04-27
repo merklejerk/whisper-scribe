@@ -19,7 +19,7 @@ ALLOWED_GUILD_IDS: Final[Optional[List[int]]] = (
 WHISPER_MODEL: Final[str] = os.getenv("WHISPER_MODEL", "openai/whisper-large-v3") # Default to large model
 
 # Voice Handling Configuration
-SILENCE_THRESHOLD_SECONDS: Final[float] = 1.5 # Seconds of silence before processing audio
+SILENCE_THRESHOLD_SECONDS: Final[float] = 2 # Seconds of silence before processing audio
 
 # Validation
 def validate_config() -> bool:

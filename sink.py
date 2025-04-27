@@ -115,7 +115,7 @@ class SilenceSink(discord.sinks.Sink):
                 speech_buf.write(audio16)
                 if is_speaking:
                     state.last_spoke = datetime.datetime.now(datetime.timezone.utc)
-                    print(f"SilenceSink: User {user_id} is still speaking.")
+                    # print(f"SilenceSink: User {user_id} is still speaking.")
             elif is_speaking:
                 # First time speech detected, write pre-buffered audio to speech buffer.
                 speech_buf.write(raw_bytes)

@@ -2,6 +2,7 @@ import os
 import traceback
 import json
 from typing import List, Optional
+from datetime import datetime
 
 class LogManager:
     """Manages logging by writing entries directly to channel-specific files."""
@@ -21,20 +22,17 @@ class LogManager:
             # Decide how to handle this - maybe raise an exception or log to a default file?
             # For now, we'll print the error and continue; writing might fail later.
 
-    # --- Public Methods --- #
-
-    # Modified to accept channel_id and write immediately
-    async def add_log_entry(self, entry: str, channel_id: Optional[int], user_id: Optional[int] = None, user_name: Optional[str] = None) -> None:
-        """Writes a log entry directly to the appropriate channel log file."""
-        await self._write_entry_to_file(entry, channel_id, user_id, user_name)
-
-    # --- Internal Methods --- #
-
-
-    # Modified to write a single entry to a channel-specific file
-    async def _write_entry_to_file(self, entry: str, channel_id: int, user_id: int , user_name: str) -> None:
+    async def add_entry(
+            self,
+            *,
+            channel_id: int,
+            content: str,
+            user_id: int ,
+            user_name: Optional[str] = None,
+            timestamp: datetime = None
+    ) -> None:
         """Appends a single log entry to the appropriate channel file."""
-        if not entry:
+        if not content:
             return
 
         # Determine filename based on channel_id
@@ -47,7 +45,7 @@ class LogManager:
             # For simplicity, using standard blocking I/O for now.
             # Consider using aiofiles if this becomes a bottleneck.
             # Append a JSON record to the session NDJSON log, including user info
-            record = {"channel_id": channel_id, "user_id": user_id, "user_name": user_name, "entry": entry}
+            record = {"user_id": user_id, "user_name": user_name or "unknown", "timestamp": timestamp.isoformat(), "content": content}
             with open(filename, "a", encoding="utf-8") as sf:
                 sf.write(json.dumps(record) + "\n")
         except IOError as e:

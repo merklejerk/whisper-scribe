@@ -166,7 +166,7 @@ class AudioProcessor(Generic[MetadataT]):
                             # "language": "english",
                             # "task": "transcribe",
                             "return_timestamps": True,
-                            "temperature": 0.05,
+                            "temperature": 0.01,
                             # TODO: Adding these parameters causes whisper to break atm.
                             # Maybe when https://github.com/huggingface/transformers/pull/36809 is merged, we can use them.
                             # "no_speech_threshold": WHISPER_NO_SPEECH_THRESHOLD,
