@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.commands import ApplicationCommand
 import asyncio
 import datetime
 import random
@@ -12,9 +12,10 @@ import src.config as config
 from .processing import process_entries
 from .sink import SilenceSink, BotMetadata
 from .logging import add_entry as add_log_entry, load_log
+from .audio_processor import AudioProcessor
 
 # Global check function for allowed guilds
-async def is_in_allowed_guild(ctx: commands.Context) -> bool:
+async def is_in_allowed_guild(ctx: Any) -> bool:
     """Checks if the command is invoked in an allowed guild."""
     if config.ALLOWED_GUILD_IDS is None:
         return True # Allow all guilds if not configured
@@ -32,9 +33,7 @@ async def is_in_allowed_guild(ctx: commands.Context) -> bool:
 MAX_RECONNECT_ATTEMPTS = 5
 INITIAL_RECONNECT_DELAY = 2.0
 
-
-# Inherit directly from commands.Bot
-class STTBot(commands.Bot):
+class AbstractSTTBot(object):
     from .audio_processor import AudioProcessor
 
     def __init__(self, session_name: Optional[str] = None):
@@ -42,11 +41,8 @@ class STTBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.voice_states = True
-        # Call commands.Bot constructor (removed guild_ids)
-        super().__init__(
-            command_prefix='!',
+        self._client = discord.Bot(
             intents=intents,
-            allowed_mentions=discord.AllowedMentions.none(),
         )
         self.current_vc: Optional[discord.VoiceClient] = None
         self.current_sink: Optional[SilenceSink] = None
@@ -70,8 +66,10 @@ class STTBot(commands.Bot):
         # Task for consuming capture queue and submitting jobs
         self._capture_consumer_task: Optional[asyncio.Task] = None
 
-        # Manually add the command
-        self.add_command(commands.Command(self._wrapup_command, name='wrapup'))
+        # Regiser commands.
+        self.add_application_comman(ApplicationCommand(self._wrapup_command, name='wrapup'))
+        # Register listeners.
+        self.add_listener(self._on_message, 'on_message')
 
         # Add the global check
         self.add_check(is_in_allowed_guild)
@@ -236,8 +234,7 @@ class STTBot(commands.Bot):
     # The name "on_ready" is automatically recognized by commands.Bot
     async def on_ready(self) -> None:
         """Called when the bot successfully connects and is ready."""
-        print(f'Logged in as {self.user.name} (ID: {self.user.id})') # Use self.user
-        print(f'Discord.py version: {discord.__version__}')
+        print(f'Logged in as {self._client.user.name} (ID: {self._client.user.id})')
         print('------')
 
         # Start the transcription consumer task
@@ -260,11 +257,11 @@ class STTBot(commands.Bot):
             content: str,
             timestamp: datetime.datetime,
         ) -> None:
-        user_obj = self.get_user(user_id)
+        user_obj = self._client.get_user(user_id)
         if user_obj is None:
-            user_obj = await self.fetch_user(user_id)
+            user_obj = await self._client.fetch_user(user_id)
         if user_obj is None:
-            user_obj = await self.fetch_user(user_id)
+            user_obj = await self._client.fetch_user(user_id)
         user_name = user_obj.display_name if user_obj else None
         print(f"{user_name if user_name else user_id}: {content}")
         await add_log_entry(
@@ -303,10 +300,9 @@ class STTBot(commands.Bot):
                 self.capture_queue.task_done()
 
     # Event handler: Called when a message is sent.
-    # The name "on_message" is automatically recognized by commands.Bot
-    async def on_message(self, message: discord.Message) -> None:
+    async def _on_message(self, message: discord.Message) -> None:
         """Called when a message is sent."""
-        if message.author == self.user: # Use self.user
+        if message.author == self._client.user: # Use self.user
             return
         if message.author.bot:
             return
@@ -315,7 +311,7 @@ class STTBot(commands.Bot):
         await self.process_commands(message) # Use self.process_commands
 
         # Log non-command messages in the designated text channel
-        ctx = await self.get_context(message) # Use self.get_context
+        ctx = await self._client.get_context(message)
         if ctx.valid: # Don't log commands themselves here
             return
 
@@ -367,20 +363,20 @@ class STTBot(commands.Bot):
             print("Disconnected.")
 
         # Close the bot itself if not already closed
-        if not self.is_closed():
-             await self.close() # Use self.close()
+        if not self._client.is_closed():
+             await self._client.close() # Use self.close()
         print("Discord client closed.")
         print("Shutdown complete.")
 
     async def join_channel(self, channel_id: int) -> bool:
         """Helper method to join a voice channel by its ID."""
-        channel = self.get_channel(channel_id)
+        channel = self._client.get_channel(channel_id)
         if isinstance(channel, discord.VoiceChannel):
             return await self._connect_and_start_recording(channel)
         print(f"Error: Channel ID {channel_id} is not a voice channel or not found.")
         return False
 
-    async def _wrapup_command(self, ctx: commands.Context):
+    async def _wrapup_command(self, ctx: Any):
         """Process the current session log and generate a D&D 5e outline."""
         await ctx.send("Processing session, please wait...")
         await process_entries(load_log(get_session_log_path(self.session_name)), self.session_name)
