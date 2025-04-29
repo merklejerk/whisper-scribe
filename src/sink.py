@@ -4,15 +4,16 @@ import io
 from collections import defaultdict
 import datetime
 import asyncio
-from typing import Optional, Dict, Any, List, DefaultDict, Tuple
+from typing import Optional, DefaultDict, Tuple
 from scipy.signal import resample_poly
-from config import SILENCE_THRESHOLD_SECONDS
 from typing import Optional, DefaultDict, Tuple
 import asyncio
 import torch
 from silero_vad import load_silero_vad, get_speech_timestamps
 from dataclasses import dataclass, field
 import threading
+
+from .config import SILENCE_THRESHOLD_SECONDS
 
 # Module-level audio constants
 SOURCE_SR = 48000  # Discord's PCM sample rate

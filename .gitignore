@@ -4,4 +4,6 @@
 *.log
 *.txt
 logs/
+wrapups/
 __pycache__
+bot.toml

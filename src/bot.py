@@ -2,19 +2,16 @@ import discord
 from discord.ext import commands
 import asyncio
 import datetime
-import sys
 import random
-from typing import Optional, Any, Tuple
-from sink import SilenceSink, BotMetadata
-from log_manager import LogManager
-from audio_processor import AudioProcessor, TranscriptionResult
+from typing import Optional, Any
+import asyncio
+import argparse
+import traceback
 
-# Import configuration and validation
-import config
-if not config.validate_config():
-    sys.exit("Exiting due to missing configuration.")
-
-import argparse  # For CLI argument parsing
+import src.config as config
+from .processing import process_entries
+from .sink import SilenceSink, BotMetadata
+from .logging import add_entry as add_log_entry, load_log
 
 # Global check function for allowed guilds
 async def is_in_allowed_guild(ctx: commands.Context) -> bool:
@@ -38,7 +35,9 @@ INITIAL_RECONNECT_DELAY = 2.0
 
 # Inherit directly from commands.Bot
 class STTBot(commands.Bot):
-    def __init__(self):
+    from .audio_processor import AudioProcessor
+
+    def __init__(self, session_name: Optional[str] = None):
         # Setup Discord client and internal state
         intents = discord.Intents.default()
         intents.message_content = True
@@ -52,9 +51,8 @@ class STTBot(commands.Bot):
         self.current_vc: Optional[discord.VoiceClient] = None
         self.current_sink: Optional[SilenceSink] = None
         self.last_voice_channel_id: Optional[int] = None # Store the ID of the last connected voice channel
-
-        # Instantiate LogManager
-        self.log_manager = LogManager()
+        # Use a timestamp for session id if not provided.
+        self.session_name = session_name or datetime.datetime.now().strftime("%d-%m-%Y_%H%M")
 
         # Create the output queue, specifying the generic type
         self.transcription_queue: asyncio.Queue = asyncio.Queue()
@@ -73,33 +71,10 @@ class STTBot(commands.Bot):
         self._capture_consumer_task: Optional[asyncio.Task] = None
 
         # Manually add the command
-        self.add_command(commands.Command(self._join_command, name='join'))
+        self.add_command(commands.Command(self._wrapup_command, name='wrapup'))
 
         # Add the global check
         self.add_check(is_in_allowed_guild)
-
-    # Command method (decorator removed)
-    async def _join_command(self, ctx: commands.Context):
-        print(f"Join command invoked by {ctx.author} in {ctx.channel}")
-        # Ensure author is in a voice channel
-        voice_state = ctx.author.voice
-        if not (voice_state and voice_state.channel):
-            await ctx.send("You need to be in a voice channel for me to join.")
-            return
-
-        # Attempt to connect and record
-        success = await self._connect_and_start_recording(voice_state.channel)
-        if success:
-            # Send confirmation to the text channel matching the voice channel ID
-            text_channel = self.get_channel(self.last_voice_channel_id)
-            if isinstance(text_channel, discord.TextChannel):
-                await text_channel.send(f"Joined voice channel '{voice_state.channel.name}' and started recording.")
-            else:
-                await ctx.channel.send(f"Joined voice channel '{voice_state.channel.name}' and started recording.")
-        else:
-            # Send failure message to invoking channel
-            await ctx.channel.send(f"Failed to join voice channel '{voice_state.channel.name}'.")
-
 
     async def _connect_and_start_recording(self, voice_channel: discord.VoiceChannel):
         """Connects to the voice channel, creates sink, and starts recording.
@@ -123,8 +98,6 @@ class STTBot(commands.Bot):
             self.current_vc = vc
             self.last_voice_channel_id = voice_channel.id # Store the voice channel ID
             print(f"Successfully joined voice channel: {vc.channel.name} (ID: {self.last_voice_channel_id})")
-
-            # No longer track text channels; rely on voice channel ID matching text channel ID
 
             # Instantiate SilenceSink, passing the AudioProcessor instance
             sink = SilenceSink(
@@ -158,13 +131,11 @@ class STTBot(commands.Bot):
             self.current_sink = None
             return False
         except Exception as e:
-            import traceback
-            print(f"An unexpected error occurred during connection/recording start: {e} {traceback.format_exc()}")
             if self.current_vc and self.current_vc.is_connected():
                 await self.current_vc.disconnect(force=True)
             self.current_vc = None
             self.current_sink = None
-            return False
+            raise 
 
     async def attempt_reconnect(self, guild: discord.Guild):
         """Attempts to reconnect to the last connected voice channel after a disconnect."""
@@ -223,7 +194,6 @@ class STTBot(commands.Bot):
                     print(f"Reconnect attempt {attempt + 1} failed during connection/startup phase.")
 
             except Exception as e:
-                import traceback
                 print(f"Unexpected error during reconnect attempt {attempt + 1} (calling connect_and_start): {e} {traceback.format_exc()}")
 
             # Wait before next attempt
@@ -284,10 +254,9 @@ class STTBot(commands.Bot):
     async def _add_log_entry(
             self,
             *,
-            category: str,
+            medium: str,
             user_id: int,
             user_name: Optional[str] = None,
-            channel_id: int,
             content: str,
             timestamp: datetime.datetime,
         ) -> None:
@@ -298,9 +267,10 @@ class STTBot(commands.Bot):
             user_obj = await self.fetch_user(user_id)
         user_name = user_obj.display_name if user_obj else None
         print(f"{user_name if user_name else user_id}: {content}")
-        await self.log_manager.add_entry(
+        await add_log_entry(
+            log_path=get_session_log_path(self.session_name),
             content=content,
-            channel_id=channel_id,
+            medium=medium,
             user_id=user_id,
             user_name=user_name,
             timestamp=timestamp,
@@ -309,49 +279,28 @@ class STTBot(commands.Bot):
     async def _process_transcription_queue(self):
         """Consumes transcription results from the queue and logs them."""
         print("Transcription consumer task started.")
-        try:
-            while True:
-                (user_id, channel_id, capture_time), transcription = await self.transcription_queue.get()
-                try:
-                    await self._add_log_entry(
-                        category="Voice",
-                        user_id=user_id,
-                        channel_id=channel_id,
-                        content=transcription,
-                        timestamp=capture_time,
-                    )
-                except Exception as e:
-                    uid_for_log = user_id if 'user_id' in locals() else "unknown user"
-                    print(f"Error logging transcription for user {uid_for_log}: {e}")
-                finally:
-                    self.transcription_queue.task_done()
-        except asyncio.CancelledError:
-            print("Transcription consumer task cancelled.")
-        except Exception as e:
-            import traceback
-            print(f"Transcription consumer task encountered an error: {e} {traceback.format_exc()}")
-        finally:
-            print("Transcription consumer task finished.")
+        while True:
+            (user_id, channel_id, capture_time), transcription = await self.transcription_queue.get()
+            try:
+                await self._add_log_entry(
+                    medium="voice",
+                    user_id=user_id,
+                    channel_id=channel_id,
+                    content=transcription,
+                    timestamp=capture_time,
+                )
+            finally:
+                self.transcription_queue.task_done()
 
     async def _process_capture_queue(self):
         """Consumes raw audio from capture queue and submits to AudioProcessor."""
         print("Capture consumer task started.")
-        try:
-            while True:
-                metadata, audio_data = await self.capture_queue.get()
-                try:
-                    self.audio_processor.submit_job(metadata, audio_data)
-                except Exception as e:
-                    print(f"Error submitting job to AudioProcessor: {e}")
-                finally:
-                    self.capture_queue.task_done()
-        except asyncio.CancelledError:
-            print("Capture consumer task cancelled.")
-        except Exception as e:
-            import traceback
-            print(f"Capture consumer encountered error: {e} {traceback.format_exc()}")
-        finally:
-            print("Capture consumer task finished.")
+        while True:
+            metadata, audio_data = await self.capture_queue.get()
+            try:
+                self.audio_processor.submit_job(metadata, audio_data)
+            finally:
+                self.capture_queue.task_done()
 
     # Event handler: Called when a message is sent.
     # The name "on_message" is automatically recognized by commands.Bot
@@ -374,9 +323,8 @@ class STTBot(commands.Bot):
         if message.channel.id == self.last_voice_channel_id:
             # Delegate formatting and logging
             await self._add_log_entry(
-                category="Text",
+                medium="text",
                 user_id=message.author.id,
-                channel_id=message.channel.id,
                 user_name=message.author.display_name,
                 content=message.content,
                 timestamp=datetime.datetime.now(datetime.timezone.utc)
@@ -432,44 +380,48 @@ class STTBot(commands.Bot):
         print(f"Error: Channel ID {channel_id} is not a voice channel or not found.")
         return False
 
+    async def _wrapup_command(self, ctx: commands.Context):
+        """Process the current session log and generate a D&D 5e outline."""
+        await ctx.send("Processing session, please wait...")
+        await process_entries(load_log(get_session_log_path(self.session_name)), self.session_name)
+
+def get_session_log_path(session_name: str) -> str:
+    """Returns the path to the session log file."""
+    return f"logs/{session_name}.ndjson"
+
 # Entrypoint: create bot instance and run
-async def main() -> None:
-    parser = argparse.ArgumentParser(description="STTBot")
-    parser.add_argument("-j", "--join", type=int, help="Voice channel ID to auto-join on startup.")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="STTBot CLI")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Bot command
+    bot_parser = subparsers.add_parser("bot", help="Run the Discord bot as normal.")
+    bot_parser.add_argument("voice_channel_id", type=int, help="Voice channel ID to auto-join on startup.")
+    bot_parser.add_argument("session_name", type=str, help="Session name to use for log file naming.")
+
+    # Process command
+    process_parser = subparsers.add_parser("wrapup", help="Process a log file and generate an outline.")
+    process_parser.add_argument("logfile", type=str, help="Path to the log file (ndjson)")
+    process_parser.add_argument("name", type=str, help="Name to use for output files")
+
     args = parser.parse_args()
 
-    bot = STTBot()
-    # If a channel ID is provided, add a one-shot ready listener to auto-join without storing state
-    if args.join:
-        channel_id = args.join
-        async def on_ready_autojoin():
-            # Remove this listener after first run
-            bot.remove_listener(on_ready_autojoin, 'on_ready')
-            await bot.join_channel(channel_id)
-        bot.add_listener(on_ready_autojoin, 'on_ready')
-
-    try:
-        print("Starting bot...")
-        await bot.start(config.DISCORD_TOKEN)
-    except discord.errors.LoginFailure:
-        print("Error: Invalid Discord token provided.")
-    except discord.errors.PrivilegedIntentsRequired:
-        print("Error: Privileged intents (Message Content, Voice States) are not enabled.")
-        print("Please enable these intents in the Discord Developer Portal.")
-    except Exception as e:
-        import traceback
-        print(f"An error occurred while running the bot: {e} {traceback.format_exc()}")
-    finally:
-        # Ensure cleanup runs even if start fails after initialization
-        # Check if bot object exists and has the cleanup method before calling
-        if 'bot' in locals() and hasattr(bot, 'close_and_cleanup'):
-            await bot.close_and_cleanup()
-
-# Run the main async function
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Shutdown requested via KeyboardInterrupt.")
-        # The finally block in main should handle cleanup now.
-        pass
+    if args.command == "bot":
+        async def run_bot():
+            bot = STTBot(session_name=args.session_name)
+            channel_id = args.voice_channel_id
+            async def on_ready_autojoin():
+                bot.remove_listener(on_ready_autojoin, 'on_ready')
+                await bot.join_channel(channel_id)
+            bot.add_listener(on_ready_autojoin, 'on_ready')
+            try:
+                await bot.start(config.DISCORD_TOKEN)
+            finally:
+                if 'bot' in locals() and hasattr(bot, 'close_and_cleanup'):
+                    await bot.close_and_cleanup()
+        asyncio.run(run_bot())
+    elif args.command == "wrapup":
+        async def run_wrapup():
+            entries = await load_log(args.logfile)
+            await process_entries(entries, args.name)
+        asyncio.run(run_wrapup())

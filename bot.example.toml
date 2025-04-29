@@ -1,0 +1,28 @@
+# Example configuration for discord-stt bot
+# Copy this file to bot.toml and edit values as needed
+
+# Discord bot configuration
+[discord]
+# List of allowed guild (server) IDs
+allowed_guild_ids = []
+# List of (numeric) user IDs allowed to use commands
+allowed_commanders = []
+
+# Whisper model configuration
+[whisper]
+# Model name for speech-to-text
+model = "openai/whisper-small.en"
+
+# Voice handling configuration
+[voice]
+# Seconds of silence before ending a segment
+silence_threshold_seconds = 2.0
+
+# Configuration for generating outlines.
+[llm]
+# OpenAI model name
+model = "gpt-4o-mini"
+# List of proper nouns to attempt to recognize
+proper_nouns = []
+# List of tips for the LLM.
+tips = []
