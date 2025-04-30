@@ -25,6 +25,8 @@ DISCORD_TOKEN: Final[Optional[str]] = os.getenv("DISCORD_TOKEN")
 ALLOWED_GUILD_IDS: Final[Optional[list[int]]] = bot_config.get("discord", {}).get("allowed_guild_ids")
 # Whitelisted command givers.
 ALLOWED_COMMANDERS: Final[Optional[list[int]]] = bot_config.get("discord", {}).get("allowed_commanders")
+# Username remapping for chatlog
+USERNAME_MAP: Final[dict[str, str]] = bot_config.get("username_map", {})
 
 # Whisper Configuration
 WHISPER_MODEL: Final[str] = bot_config.get("whisper", {}).get("model", "openai/whisper-small.en")

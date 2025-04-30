@@ -8,6 +8,9 @@ allowed_guild_ids = []
 # List of (numeric) user IDs allowed to use commands
 allowed_commanders = []
 
+# Mapping of usernames to character names
+[username_map]
+
 # Whisper model configuration
 [whisper]
 # Model name for speech-to-text
