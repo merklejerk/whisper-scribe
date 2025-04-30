@@ -3,8 +3,6 @@
 
 # Discord bot configuration
 [discord]
-# List of allowed guild (server) IDs
-allowed_guild_ids = []
 # List of (numeric) user IDs allowed to use commands
 allowed_commanders = []
 

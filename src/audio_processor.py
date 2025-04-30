@@ -163,7 +163,6 @@ class AudioProcessor(Generic[MetadataT]):
                             # "best_of": WHISPER_BEST_OF,
                             # "temperature": WHISPER_TEMPERATURES,
                         })
-                    print(f"AudioProcessor thread: Whisper pipeline finished.")
                     transcription: str = result["text"].strip()
 
                     if transcription:
