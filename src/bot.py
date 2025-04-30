@@ -327,7 +327,7 @@ class DiscordBot(object):
             await self._add_log_entry(
                 medium="text",
                 user_id=message.author.id,
-                user_name=message.author.user_name,
+                user_name=message.author.name,
                 content=message.content,
                 timestamp=datetime.datetime.now(datetime.timezone.utc)
             )
