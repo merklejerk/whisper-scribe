@@ -139,7 +139,7 @@ class DiscordBot(object):
         if channel.id != self.voice_channel_id:
             # Not our channel, ignore
             return
-        asyncio.create_task(self._attempt_reconnect(channel))
+        asyncio.create_task(self._connect_and_start_recording(channel))
 
     # Called when the bot successfully connects and is ready.
     async def _on_ready(self) -> None:
