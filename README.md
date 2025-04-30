@@ -13,7 +13,7 @@ WhisperScribe is a self-hosted Discord bot for real-time, multi-user voice trans
 ### 1. Clone the repo
 ```bash
 git clone <repo_url>
-cd discord-stt
+cd whisper-scribe
 ```
 ### 2. Install dependencies
 ```bash
