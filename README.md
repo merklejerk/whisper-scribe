@@ -33,6 +33,8 @@ Copy `config.example.toml` to `config.toml` and populate it with your configurat
 cp .config.example.toml config.toml
 ```
 
+If you're planning on running this CPU-only, I recommend setting your whisper `model` to `openai/whisper-small.en` for real-time transcription. If you've got a compatible GPU, `openai/whisper-large-v3-turbo` works fantastic.
+
 ## Usage
 
 Run the bot with Poetry:
