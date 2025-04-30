@@ -33,6 +33,9 @@ WHISPER_MODEL: Final[str] = bot_config.get("whisper", {}).get("model", "openai/w
 
 # Voice Handling Configuration
 SILENCE_THRESHOLD_SECONDS: Final[float] = bot_config.get("voice", {}).get("silence_threshold_seconds", 2)
+VAD_THRESHOLD: Final[float] = bot_config.get("voice", {}).get("vad_threshold", 0.5)
+# Maximum allowed speech buffer size in bytes before forced processing
+MAX_SPEECH_BUF_BYTES: Final[int] = bot_config.get("voice", {}).get("max_speech_buf_bytes", 0)
 
 OPENAI_API_KEY: Final[str] = os.getenv("OPENAI_API_KEY")
 

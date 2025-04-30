@@ -52,34 +52,18 @@ cp .env.example config.toml
 
 Run the bot with Poetry:
 ```bash
-poetry run python bot.py [--join CHANNEL_ID]
+poetry run python -m src.cli VOICE_CHANNEL_ID SESSION_NAME
 ```
 
-- `--join CHANNEL_ID` (`-j`) — Automatically join the specified voice channel on startup without needing `!join`.
-- Once running, use `!join` in any text channel to have the bot join your current voice channel and start recording.
-
-## Configuration
-
-All settings are loaded from environment variables via `python-dotenv` in `config.py`. Key options:
-
-- `DISCORD_TOKEN` — Your bot token.
-- `ALLOWED_GUILDS` — (Optional) Restrict text commands to specific servers.
-- `WHISPER_MODEL` — Whisper model identifier for transcription.
-- `SILENCE_THRESHOLD_SECONDS` — Seconds of silence before sending audio to Whisper.
+The bot will instantly join the voice channel you provide and start transcribing to `logs/{SESSION_NAME}`.
+At any time you can say `!wrapup` in the voice channel's text channel to have the bot produce wrapup files.
 
 ## How It Works
 
-- **bot.py**: Defines `STTBot` (subclass of `discord.ext.commands.Bot`) with commands, event handlers, and reconnection logic.
-- **sink.py**: Implements `SilenceSink` to buffer audio per user, detect silence, and send raw audio chunks for processing.
-- **audio_processor.py**: Loads Whisper model, accepts raw audio jobs, and enqueues transcription results.
-- **log_manager.py**: Receives transcription and chat logs, writes them to console and session log files.
-- **config.py**: Loads and validates environment configuration.
-
-## Development & Contributing
-
-- Ensure FFmpeg is installed.
-- Run tests (if available) and lint before submitting PRs.
-- Contributions, issues, and enhancements are welcome.
+- **Discord Integration:** [py-cord] provides Discord API and voice channel access for real-time audio capture and command handling.
+- **Audio Capture & VAD:** [silero-vad] and [webrtcvad] enable voice activity detection and silence detection for segmenting user speech.
+- **Transcription:** [torch], [torchaudio], and [transformers] power the Whisper model for local speech-to-text transcription.
+- **Wrapups:** [openai] library is used to generate session summaries via GPT models.
 
 ## License
 

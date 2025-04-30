@@ -34,7 +34,7 @@ def main():
                 await bot.start(config.DISCORD_TOKEN)
             finally:
                 if bot:
-                    await bot.close_and_cleanup()
+                    await bot.shutdown()
         asyncio.run(run_bot())
     elif args.command == "wrapup":
         async def run_wrapup():

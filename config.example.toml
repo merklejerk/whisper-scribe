@@ -17,7 +17,11 @@ model = "openai/whisper-small.en"
 # Voice handling configuration
 [voice]
 # Seconds of silence before ending a segment
-silence_threshold_seconds = 2.0
+silence_threshold_seconds = 1.75
+# Voice Activity Detection (VAD) threshold for Silero VAD (0.0-1.0, higher = more strict)
+vad_threshold = 0.55
+# Maximum allowed speech buffer size in bytes before forced processing (0 = disabled)
+max_speech_buf_bytes = 2097152  # 2MB default, adjust as needed
 
 # Configuration for generating outlines.
 [llm]
@@ -25,5 +29,5 @@ silence_threshold_seconds = 2.0
 model = "gpt-4o-mini"
 # List of proper nouns to attempt to recognize
 proper_nouns = []
-# List of tips for the LLM.
+# List of tips for the wrapup LLM.
 tips = []

@@ -13,7 +13,7 @@ from silero_vad import load_silero_vad, get_speech_timestamps
 from dataclasses import dataclass, field
 import threading
 
-from .config import SILENCE_THRESHOLD_SECONDS
+from .config import SILENCE_THRESHOLD_SECONDS, VAD_THRESHOLD, MAX_SPEECH_BUF_BYTES
 
 # Module-level audio constants
 SOURCE_SR = 48000  # Discord's PCM sample rate
@@ -26,7 +26,7 @@ RAW_BUFFER_MAX_BYTES = int(TARGET_SR * RAW_BUFFER_DURATION * 2)
 PRUNE_THRESHOLD_SECONDS = 5.
 
 @dataclass
-class BotMetadata:
+class VoiceMetadata:
     """Metadata for audio processing jobs."""
     user_id: int
     user_name: str
@@ -34,8 +34,8 @@ class BotMetadata:
     capture_time: datetime.datetime
 
     def __repr__(self) -> str:
-        """String representation of BotMetadata."""
-        return f"BotMetadata(user_name={self.user_name}, capture_time={self.capture_time.isoformat()}, ...)"
+        """String representation of VoiceMetadata."""
+        return f"VoiceMetadata(user_name={self.user_name}, capture_time={self.capture_time.isoformat()}, ...)"
 
 @dataclass
 class UserState:
@@ -46,20 +46,18 @@ class UserState:
     last_noise: Optional[datetime.datetime] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-class SilenceSink(discord.sinks.Sink):
-    """A sink that buffers audio and submits it to an AudioProcessor when a user stops speaking."""
-    # Type hints
-    voice_client: discord.VoiceClient
-    capture_queue: asyncio.Queue[Tuple[BotMetadata, bytes]]  # Queue for buffering audio to bot
+class VoiceCaptureSink(discord.sinks.Sink):
+    """A sink that detects segments of voice activity and submits it to a queue."""
+    voice_client: Optional[discord.VoiceClient]
+    capture_queue: asyncio.Queue[Tuple[VoiceMetadata, bytes]]  # Queue for buffering audio to bot
     user_states: DefaultDict[int, UserState]
     cached_user_names: dict[int, str]
-    _cleanup_task: Optional[asyncio.Task]
+    _heartbeat_task: Optional[asyncio.Task]
     _get_speech_timestamps: callable # Silero VAD utility function
 
-    # Updated __init__ signature
-    def __init__(self, vc: discord.VoiceClient, capture_queue: asyncio.Queue[Tuple[BotMetadata, bytes]]):
+    def __init__(self, capture_queue: asyncio.Queue[Tuple[VoiceMetadata, bytes]]):
         super().__init__()
-        self.voice_client = vc
+        self.voice_client = None
         self.capture_queue = capture_queue
         # per-user audio state
         self.user_states: DefaultDict[int, UserState] = defaultdict(
@@ -69,11 +67,10 @@ class SilenceSink(discord.sinks.Sink):
             )
         )
         self._cached_user_names = {}
-        # Load Silero VAD model and utilities from silero_vad library
         vad_model = load_silero_vad()
         self._get_speech_timestamps = lambda audio: \
-            get_speech_timestamps(audio, model=vad_model, threshold=0.66, min_speech_duration_ms=200)
-        self._cleanup_task = None
+            get_speech_timestamps(audio, model=vad_model, threshold=VAD_THRESHOLD, min_speech_duration_ms=200)
+        self._heartbeat_task = None
 
     def _has_voice(self, audio_16khz: bytes) -> bool:
         """Check if 16kHz mono int16 audio contains speech using Silero VAD"""
@@ -93,6 +90,7 @@ class SilenceSink(discord.sinks.Sink):
         pcm16 = np.clip(resampled, -32768, 32767).astype(np.int16)
         return pcm16.tobytes()
 
+    # Gets called on another thread.
     def write(self, data: bytes, user_id: Optional[int]) -> None:
         """Buffer raw audio until voice detected, then commit to speech buffer."""
         if user_id is None:
@@ -150,23 +148,26 @@ class SilenceSink(discord.sinks.Sink):
                     self._cached_user_names[user_id] = f"user_{user_id}"
         return self._cached_user_names[user_id]
     
-    async def _cleanup_loop(self) -> None:
-        """Internal loop that detects silence and submits jobs to the AudioProcessor."""
+    async def _heartbeat_loop(self) -> None:
+        """Internal loop that looks for silence breaks in captured audio and submits it to the queue."""
         try:
             while True:
-                # Derive text channel ID from voice client
                 channel_id = self.voice_client.channel.id
-
                 for user_id, state in list(self.user_states.items()):
-                    # synchronize buffer access
                     with state.lock:
                         now = datetime.datetime.now(datetime.timezone.utc)
-                        if state.last_spoke and (now - state.last_spoke).total_seconds() > SILENCE_THRESHOLD_SECONDS:
-                            if state.speech_buf.tell() > 0:
+                        speech_size = state.speech_buf.tell()
+                        if speech_size > 0 and state.last_spoke:
+                            detected_silence = (now - state.last_spoke).total_seconds() > SILENCE_THRESHOLD_SECONDS
+                            is_max_size = MAX_SPEECH_BUF_BYTES and speech_size > MAX_SPEECH_BUF_BYTES
+                            if detected_silence or is_max_size:
                                 raw_audio: bytes = state.speech_buf.getvalue()
                                 user_name = await self._get_user_name(user_id)
-                                print(f"SilenceSink: Detected silence for user {user_name} ({user_id}). Submitting job...")
-                                metadata = BotMetadata(
+                                if detected_silence:
+                                    print(f"VoiceCaptureSink: Detected silence for user {user_name}. Submitting job...")
+                                else:
+                                    print(f"VoiceCaptureSink: Buffer size exceeded for user {user_name}. Submitting job...")
+                                metadata = VoiceMetadata(
                                     user_id=user_id,
                                     user_name=user_name,
                                     channel_id=channel_id,
@@ -180,58 +181,32 @@ class SilenceSink(discord.sinks.Sink):
                         if state.last_noise and (now - state.last_noise).total_seconds() > PRUNE_THRESHOLD_SECONDS:
                             self.user_states.pop(user_id, None)
                 await asyncio.sleep(0.33)
-        except asyncio.CancelledError:
-            print("SilenceSink: Cleanup task cancelled.")
-            # No need to process remaining audio here, stop_cleanup handles it.
-        except Exception as e:
-             import traceback
-             print(f"SilenceSink: Error in cleanup loop: {e} {traceback.format_exc()}")
         finally:
-            print("SilenceSink: Cleanup loop finished.")
+            print("VoiceCaptureSink: heartbeat loop finished.")
 
-    async def start_cleanup(self) -> None:
-        """Starts the background cleanup task and the audio processor thread."""
+    def is_started(self) -> bool:
+        """Check if the sink is started."""
+        return self._heartbeat_task is not None
+    
+    async def start(self, vc: discord.VoiceClient):
+        """Starts the background heartbeat task."""
         # Then start the silence detection loop
-        if self._cleanup_task is None or self._cleanup_task.done():
-            print("SilenceSink: Starting silence detection task.")
-            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
-        else:
-            print("SilenceSink: Cleanup task already running.")
-
-    async def stop_cleanup(self) -> None:
-        """Stops the cleanup task and the audio processor gracefully."""
-        # 1. Stop the cleanup loop (prevents new jobs being submitted by it)
-        if self._cleanup_task and not self._cleanup_task.done():
-            print("SilenceSink: Stopping silence detection task...")
-            self._cleanup_task.cancel()
+        if self._heartbeat_task is None:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        self.voice_client = vc
+        print("VoiceCaptureSink started.")
+    
+    async def stop(self):
+        """Stops the heartbeat task and clears buffers."""
+        # Stop the heartbeat loop (prevents new jobs being submitted by it)
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
             try:
-                await self._cleanup_task
+                await self._heartbeat_task
             except asyncio.CancelledError:
-                print("SilenceSink: Cleanup task successfully cancelled.") # Expected
-            self._cleanup_task = None
-        else:
-            print("SilenceSink: Cleanup task not running or already stopped.")
-
-        # 2. Submit any remaining audio from buffers
-        print("SilenceSink: Submitting any remaining audio buffers before shutdown...")
-        remaining_jobs = 0
-        # Derive text channel ID from voice client for final submission
-        channel_id = self.voice_client.channel.id
-        for user_id, state in list(self.user_states.items()):
-            # synchronize final buffer submission
-            with state.lock:
-                if state.speech_buf.getbuffer().nbytes > 0:
-                    print(f"SilenceSink: Submitting remaining audio for user {user_id}...")
-                    audio_data = state.speech_buf.getvalue()
-                    ts = state.last_spoke
-                    metadata: BotMetadata = (user_id, channel_id, ts)
-                    await self.capture_queue.put((metadata, audio_data))
-                    remaining_jobs += 1
-                    state.speech_buf.seek(0)
-                    state.speech_buf.truncate(0)
+                pass # Expected.
+            self._heartbeat_task = None
+        
+        # Clear buffers.
         self.user_states.clear()
-        print(f"SilenceSink: Finished submitting {remaining_jobs} remaining audio jobs.")
-
-        # 3. Nothing further to do here; bot will stop audio_processor
-
-        print("SilenceSink cleanup complete.")
+        print("VoiceCaptureSink stopped.")
