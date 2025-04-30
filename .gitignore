@@ -6,4 +6,4 @@
 logs/
 wrapups/
 __pycache__
-bot.toml
+config.toml

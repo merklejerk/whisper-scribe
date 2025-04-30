@@ -25,16 +25,25 @@ RAW_BUFFER_MAX_BYTES = int(TARGET_SR * RAW_BUFFER_DURATION * 2)
 
 PRUNE_THRESHOLD_SECONDS = 5.
 
+@dataclass
+class BotMetadata:
+    """Metadata for audio processing jobs."""
+    user_id: int
+    user_name: str
+    channel_id: int
+    capture_time: datetime.datetime
 
-# Define the specific type of metadata we will use
-BotMetadata = Tuple[int, Optional[int], datetime.datetime]  # (user_id, channel_id, capture_time)
+    def __repr__(self) -> str:
+        """String representation of BotMetadata."""
+        return f"BotMetadata(user_name={self.user_name}, capture_time={self.capture_time.isoformat()}, ...)"
 
 @dataclass
 class UserState:
     speech_buf: io.BytesIO
     vad_buf: io.BytesIO
-    last_spoke: Optional[datetime.datetime]
-    last_noise: Optional[datetime.datetime]
+    first_spoke: Optional[datetime.datetime] = None
+    last_spoke: Optional[datetime.datetime] = None
+    last_noise: Optional[datetime.datetime] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 class SilenceSink(discord.sinks.Sink):
@@ -43,7 +52,7 @@ class SilenceSink(discord.sinks.Sink):
     voice_client: discord.VoiceClient
     capture_queue: asyncio.Queue[Tuple[BotMetadata, bytes]]  # Queue for buffering audio to bot
     user_states: DefaultDict[int, UserState]
-    silence_threshold: float
+    cached_user_names: dict[int, str]
     _cleanup_task: Optional[asyncio.Task]
     _get_speech_timestamps: callable # Silero VAD utility function
 
@@ -54,11 +63,16 @@ class SilenceSink(discord.sinks.Sink):
         self.capture_queue = capture_queue
         # per-user audio state
         self.user_states: DefaultDict[int, UserState] = defaultdict(
-            lambda: UserState(io.BytesIO(), io.BytesIO(), None, None)
+            lambda: UserState(
+                speech_buf=io.BytesIO(),
+                vad_buf=io.BytesIO(),
+            )
         )
+        self._cached_user_names = {}
         # Load Silero VAD model and utilities from silero_vad library
         vad_model = load_silero_vad()
-        self._get_speech_timestamps = lambda audio: get_speech_timestamps(audio, model=vad_model, threshold=0.55, min_speech_duration_ms=250)
+        self._get_speech_timestamps = lambda audio: \
+            get_speech_timestamps(audio, model=vad_model, threshold=0.66, min_speech_duration_ms=200)
         self._cleanup_task = None
 
     def _has_voice(self, audio_16khz: bytes) -> bool:
@@ -116,13 +130,26 @@ class SilenceSink(discord.sinks.Sink):
                 speech_buf.write(audio16)
                 if is_speaking:
                     state.last_spoke = datetime.datetime.now(datetime.timezone.utc)
-                    # print(f"SilenceSink: User {user_id} is still speaking.")
             elif is_speaking:
                 # First time speech detected, write pre-buffered audio to speech buffer.
                 speech_buf.write(raw_bytes)
                 state.last_spoke = datetime.datetime.now(datetime.timezone.utc)
-                print(f"SilenceSink: User {user_id} speech detected in pre-buffer.")
+                state.first_spoke = state.last_spoke
 
+    async def _get_user_name(self, user_id: int) -> str:
+        """Get the username for a given user ID, caching it if necessary."""
+        if user_id not in self._cached_user_names:
+            user = self.voice_client.client.get_user(user_id)
+            if user:
+                self._cached_user_names[user_id] = user.name
+            else:
+                user = await self.voice_client.client.fetch_user(user_id)
+                if user:
+                    self._cached_user_names[user_id] = user.name
+                else:
+                    self._cached_user_names[user_id] = f"user_{user_id}"
+        return self._cached_user_names[user_id]
+    
     async def _cleanup_loop(self) -> None:
         """Internal loop that detects silence and submits jobs to the AudioProcessor."""
         try:
@@ -137,16 +164,21 @@ class SilenceSink(discord.sinks.Sink):
                         if state.last_spoke and (now - state.last_spoke).total_seconds() > SILENCE_THRESHOLD_SECONDS:
                             if state.speech_buf.tell() > 0:
                                 raw_audio: bytes = state.speech_buf.getvalue()
-                                print(f"SilenceSink: Detected silence for user {user_id}. Submitting job...")
-                                metadata: BotMetadata = (user_id, channel_id, state.last_spoke)
+                                user_name = await self._get_user_name(user_id)
+                                print(f"SilenceSink: Detected silence for user {user_name} ({user_id}). Submitting job...")
+                                metadata = BotMetadata(
+                                    user_id=user_id,
+                                    user_name=user_name,
+                                    channel_id=channel_id,
+                                    capture_time=state.first_spoke,
+                                )
                                 await self.capture_queue.put((metadata, raw_audio))
                                 state.last_spoke = None
+                                state.first_spoke = None
                                 state.speech_buf.seek(0)
                                 state.speech_buf.truncate(0)
-                                print(f"SilenceSink: Buffer for user {user_id} submitted and cleared.")
                         if state.last_noise and (now - state.last_noise).total_seconds() > PRUNE_THRESHOLD_SECONDS:
                             self.user_states.pop(user_id, None)
-                            print(f"SilenceSink: Cleaned up entries for silent user {user_id}")
                 await asyncio.sleep(0.33)
         except asyncio.CancelledError:
             print("SilenceSink: Cleanup task cancelled.")
@@ -156,7 +188,6 @@ class SilenceSink(discord.sinks.Sink):
              print(f"SilenceSink: Error in cleanup loop: {e} {traceback.format_exc()}")
         finally:
             print("SilenceSink: Cleanup loop finished.")
-
 
     async def start_cleanup(self) -> None:
         """Starts the background cleanup task and the audio processor thread."""

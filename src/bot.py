@@ -1,5 +1,5 @@
 import discord
-from discord.commands import ApplicationCommand
+from discord.ext.commands import Bot,Command
 import asyncio
 import datetime
 import random
@@ -10,9 +10,10 @@ import traceback
 
 import src.config as config
 from .processing import process_entries
-from .sink import SilenceSink, BotMetadata
 from .logging import add_entry as add_log_entry, load_log
 from .audio_processor import AudioProcessor
+from .sink import SilenceSink, BotMetadata
+from .patched_voice_client import PatchedVoiceClient
 
 # Global check function for allowed guilds
 async def is_in_allowed_guild(ctx: Any) -> bool:
@@ -33,22 +34,19 @@ async def is_in_allowed_guild(ctx: Any) -> bool:
 MAX_RECONNECT_ATTEMPTS = 5
 INITIAL_RECONNECT_DELAY = 2.0
 
-class AbstractSTTBot(object):
-    from .audio_processor import AudioProcessor
-
-    def __init__(self, session_name: Optional[str] = None):
+class STTBot(object):
+    def __init__(self, session_name: str, device: str = "cpu"):
         # Setup Discord client and internal state
         intents = discord.Intents.default()
         intents.message_content = True
         intents.voice_states = True
-        self._client = discord.Bot(
-            intents=intents,
-        )
+        self._client = Bot(intents=intents, command_prefix="!")
         self.current_vc: Optional[discord.VoiceClient] = None
         self.current_sink: Optional[SilenceSink] = None
         self.last_voice_channel_id: Optional[int] = None # Store the ID of the last connected voice channel
         # Use a timestamp for session id if not provided.
         self.session_name = session_name or datetime.datetime.now().strftime("%d-%m-%Y_%H%M")
+        self.device = device
 
         # Create the output queue, specifying the generic type
         self.transcription_queue: asyncio.Queue = asyncio.Queue()
@@ -58,7 +56,8 @@ class AbstractSTTBot(object):
         # Instantiate AudioProcessor, specifying the generic type
         self.audio_processor: AudioProcessor[BotMetadata] = AudioProcessor(
             output_queue=self.transcription_queue,
-            model_name=config.WHISPER_MODEL
+            model_name=config.WHISPER_MODEL,
+            device=self.device
         )
 
         # Task for consuming transcriptions
@@ -67,12 +66,21 @@ class AbstractSTTBot(object):
         self._capture_consumer_task: Optional[asyncio.Task] = None
 
         # Regiser commands.
-        self.add_application_comman(ApplicationCommand(self._wrapup_command, name='wrapup'))
+        self._client.add_command(Command(self._wrapup_command, name='wrapup'))
+
         # Register listeners.
-        self.add_listener(self._on_message, 'on_message')
+        self._client.add_listener(self._on_message, 'on_message')
+        self._client.add_listener(self._on_ready, 'on_ready')
 
         # Add the global check
-        self.add_check(is_in_allowed_guild)
+        self._client.add_check(is_in_allowed_guild)
+        
+    async def start(self, api_key: str, *, on_ready: Optional[callable] = None):
+        if on_ready:
+            async def wrapped_on_ready():
+                await on_ready(self)
+            self._client.add_listener(wrapped_on_ready, 'on_ready')
+        await self._client.start(api_key)
 
     async def _connect_and_start_recording(self, voice_channel: discord.VoiceChannel):
         """Connects to the voice channel, creates sink, and starts recording.
@@ -92,7 +100,10 @@ class AbstractSTTBot(object):
                     await self.current_sink.stop_cleanup()
                     self.current_sink = None
 
-            vc: discord.VoiceClient = await asyncio.wait_for(voice_channel.connect(), timeout=30.0)
+            vc: discord.VoiceClient = await asyncio.wait_for(
+                voice_channel.connect(reconnect=True, cls=PatchedVoiceClient),
+                timeout=30.0
+            )
             self.current_vc = vc
             self.last_voice_channel_id = voice_channel.id # Store the voice channel ID
             print(f"Successfully joined voice channel: {vc.channel.name} (ID: {self.last_voice_channel_id})")
@@ -152,11 +163,9 @@ class AbstractSTTBot(object):
             self.current_vc = None
         # --- End Cleanup --- #
 
-        # --- Check if we have a last channel to reconnect to --- #
         if self.last_voice_channel_id is None:
             print("Reconnect failed: No last voice channel ID stored.")
             return
-        # --- End Check --- #
 
         # --- Get Voice Channel Object --- #
         target_voice_channel = guild.get_channel(self.last_voice_channel_id)
@@ -230,9 +239,8 @@ class AbstractSTTBot(object):
         else:
              print("Error: Cannot attempt reconnect, guild information unavailable from channel.")
 
-    # Event handler: Called when the bot successfully connects and is ready.
-    # The name "on_ready" is automatically recognized by commands.Bot
-    async def on_ready(self) -> None:
+    # Called when the bot successfully connects and is ready.
+    async def _on_ready(self) -> None:
         """Called when the bot successfully connects and is ready."""
         print(f'Logged in as {self._client.user.name} (ID: {self._client.user.id})')
         print('------')
@@ -246,23 +254,17 @@ class AbstractSTTBot(object):
             print("Starting capture consumer task...")
             self._capture_consumer_task = asyncio.create_task(self._process_capture_queue())
 
-        print("Ready. Use '!join' in a text channel to have me join your voice channel.")
+        print("Ready.")
 
     async def _add_log_entry(
             self,
             *,
             medium: str,
             user_id: int,
-            user_name: Optional[str] = None,
+            user_name: str,
             content: str,
             timestamp: datetime.datetime,
         ) -> None:
-        user_obj = self._client.get_user(user_id)
-        if user_obj is None:
-            user_obj = await self._client.fetch_user(user_id)
-        if user_obj is None:
-            user_obj = await self._client.fetch_user(user_id)
-        user_name = user_obj.display_name if user_obj else None
         print(f"{user_name if user_name else user_id}: {content}")
         await add_log_entry(
             log_path=get_session_log_path(self.session_name),
@@ -277,15 +279,17 @@ class AbstractSTTBot(object):
         """Consumes transcription results from the queue and logs them."""
         print("Transcription consumer task started.")
         while True:
-            (user_id, channel_id, capture_time), transcription = await self.transcription_queue.get()
+            metadata, transcription = await self.transcription_queue.get()
             try:
                 await self._add_log_entry(
                     medium="voice",
-                    user_id=user_id,
-                    channel_id=channel_id,
+                    user_id=metadata.user_id,
+                    user_name=metadata.user_name,
+                    timestamp=metadata.capture_time,
                     content=transcription,
-                    timestamp=capture_time,
                 )
+            except:
+                raise
             finally:
                 self.transcription_queue.task_done()
 
@@ -306,15 +310,8 @@ class AbstractSTTBot(object):
             return
         if message.author.bot:
             return
-
         # Process commands first - essential for commands.Bot
-        await self.process_commands(message) # Use self.process_commands
-
-        # Log non-command messages in the designated text channel
-        ctx = await self._client.get_context(message)
-        if ctx.valid: # Don't log commands themselves here
-            return
-
+        await self._client.process_commands(message)
         # Only log messages in the text channel with the same ID as the last voice channel
         if message.channel.id == self.last_voice_channel_id:
             # Delegate formatting and logging
@@ -394,6 +391,7 @@ if __name__ == "__main__":
     bot_parser = subparsers.add_parser("bot", help="Run the Discord bot as normal.")
     bot_parser.add_argument("voice_channel_id", type=int, help="Voice channel ID to auto-join on startup.")
     bot_parser.add_argument("session_name", type=str, help="Session name to use for log file naming.")
+    bot_parser.add_argument("--device", type=str, default="cpu", help="Device for Whisper model (e.g. 'cpu', 'cuda', 'mps')")
 
     # Process command
     process_parser = subparsers.add_parser("wrapup", help="Process a log file and generate an outline.")
@@ -404,16 +402,14 @@ if __name__ == "__main__":
 
     if args.command == "bot":
         async def run_bot():
-            bot = STTBot(session_name=args.session_name)
-            channel_id = args.voice_channel_id
-            async def on_ready_autojoin():
-                bot.remove_listener(on_ready_autojoin, 'on_ready')
-                await bot.join_channel(channel_id)
-            bot.add_listener(on_ready_autojoin, 'on_ready')
+            bot = None
             try:
-                await bot.start(config.DISCORD_TOKEN)
+                bot = STTBot(args.session_name, device=args.device)
+                async def on_ready_autojoin(bot: STTBot):
+                    await bot.join_channel(args.voice_channel_id)
+                await bot.start(config.DISCORD_TOKEN, on_ready=on_ready_autojoin)
             finally:
-                if 'bot' in locals() and hasattr(bot, 'close_and_cleanup'):
+                if bot:
                     await bot.close_and_cleanup()
         asyncio.run(run_bot())
     elif args.command == "wrapup":

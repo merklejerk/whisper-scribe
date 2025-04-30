@@ -3,8 +3,7 @@ import asyncio
 import queue
 import threading
 import numpy as np
-import librosa  # for silence trimming
-# Updated imports for Generics
+import librosa
 from typing import Optional, Dict, Any, Tuple, TypeAlias, Generic, TypeVar
 from transformers import Pipeline as WhisperPipeline
 from transformers import pipeline
@@ -12,13 +11,6 @@ from transformers import pipeline
 # Module-level audio constants
 TARGET_SR = 16000  # expected incoming sample rate
 SILENCE_TOP_DB = 60  # threshold for trimming silence
-
-# TODO: Not used yet due to transformers + whisper bug.
-WHISPER_NO_SPEECH_THRESHOLD = 0.6
-WHISPER_LOG_PROB_THRESHOLD = -1.5
-WHISPER_BEAM_SIZE = 3
-WHISPER_BEST_OF = 3
-WHISPER_TEMPERATURES = (0.0, 0.2, 0.4)
 
 # Define a TypeVar for the generic metadata
 MetadataT = TypeVar('MetadataT')
@@ -32,6 +24,7 @@ TranscriptionResult: TypeAlias = Tuple[MetadataT, str]
 
 # Make the class Generic over MetadataT
 class AudioProcessor(Generic[MetadataT]):
+
     """Handles audio transcription sequentially, passing opaque metadata through."""
     # Type hints using MetadataT
     _pipeline: Optional[WhisperPipeline]
@@ -43,7 +36,7 @@ class AudioProcessor(Generic[MetadataT]):
     _model_name: str
 
     # Output queue type hint updated
-    def __init__(self, output_queue: asyncio.Queue[TranscriptionResult[MetadataT]], model_name: str):
+    def __init__(self, output_queue: asyncio.Queue[TranscriptionResult[MetadataT]], model_name: str, device: str = "cpu"):
         self._pipeline = None
         self._output_queue = output_queue
         self._model_name = model_name
@@ -51,6 +44,7 @@ class AudioProcessor(Generic[MetadataT]):
         self._thread = None
         self._stop_event = threading.Event()
         self._pipeline_lock = threading.Lock()
+        self._device = device
 
     def _initialize_pipeline(self) -> bool:
         """Initializes the Whisper pipeline using the configured model name."""
@@ -63,7 +57,7 @@ class AudioProcessor(Generic[MetadataT]):
                 self._pipeline = pipeline(
                     "automatic-speech-recognition",
                     model=self._model_name,
-                    device="cpu",
+                    device=self._device,
                     chunk_length_s=30,
                 )
                 print(f"AudioProcessor: Whisper pipeline ({self._model_name}) initialized successfully.")
@@ -101,7 +95,6 @@ class AudioProcessor(Generic[MetadataT]):
         """Submits audio data with associated metadata for processing."""
         if not self._stop_event.is_set():
             # Log received metadata generically if needed, or remove logging details
-            print(f"AudioProcessor: Submitting job with metadata")
             self._input_queue.put((metadata, audio_data))
         else:
             print(f"AudioProcessor: Cannot submit job, processor is stopping.")
@@ -113,7 +106,7 @@ class AudioProcessor(Generic[MetadataT]):
 
         # Initialize the pipeline.
         if not self._initialize_pipeline():
-            print("AudioProcessor: Pipeline initialization failed. Cannot process audio. Skipping job.")
+            raise RuntimeError("Pipeline initialization failed.")
 
         while not self._stop_event.is_set():
             try:
@@ -153,20 +146,15 @@ class AudioProcessor(Generic[MetadataT]):
                         "sampling_rate": TARGET_SR,
                     }
 
-                    if self._pipeline is None:
-                         print(f"AudioProcessor thread: ERROR - Pipeline is None despite initialization check. Skipping.")
-                         input_queue.task_done()
-                         continue
-
                     # Transcribe (BLOCKING call within this thread)
-                    print(f"AudioProcessor thread: Starting Whisper pipeline...")
                     result: AudioPipelineOutput = self._pipeline(
                         pipeline_input,
                         generate_kwargs={
-                            # "language": "english",
+                            "language": "english",
                             # "task": "transcribe",
                             "return_timestamps": True,
                             "temperature": 0.01,
+                            "forced_decoder_ids": None,
                             # TODO: Adding these parameters causes whisper to break atm.
                             # Maybe when https://github.com/huggingface/transformers/pull/36809 is merged, we can use them.
                             # "no_speech_threshold": WHISPER_NO_SPEECH_THRESHOLD,
@@ -183,8 +171,6 @@ class AudioProcessor(Generic[MetadataT]):
                         try:
                             # Pass the original metadata (type MetadataT) along with the transcription
                             self._output_queue.put_nowait((metadata, transcription))
-                            # Log generically
-                            print(f"AudioProcessor thread: Put transcription with metadata onto output queue.")
                         except asyncio.QueueFull:
                              # Log generically
                              print(f"AudioProcessor thread: WARNING - Output queue is full. Discarding transcription.")

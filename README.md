@@ -25,30 +25,28 @@ A lightweight Discord bot that joins a voice channel, records speech, transcribe
 
 ## Installation
 
-1. Clone or download this repository:
-   ```bash
-   git clone <repo_url>
-   cd discord-stt
-   ```
-2. Install dependencies via Poetry:
-   ```bash
-   poetry install
-   ```
-3. Create a `.env` file in the project root with the following variables:
-   ```ini
-   DISCORD_TOKEN="YOUR_DISCORD_BOT_TOKEN"
-   # Optional: Comma‑separated list of guild IDs to restrict commands
-   ALLOWED_GUILDS="123456789012345678,987654321098765432"
-   # Optional: Whisper model name (e.g., "openai/whisper-small", default: "openai/whisper-large-v3")
-   WHISPER_MODEL="openai/whisper-base"
-   ```
-4. The latest release of `py-cord` has a bug when decoding voice streams that will regularly crash the voice client loop. For now, you can manually mitigate it by finding `site-packages/discord/voice-client.py` and applying the edit:
-   ```diff
-   615c615
-   <         if data[0] == 0xBE and data[1] == 0xDE and len(data) > 4:
-   ---
-   >         if len(data) and data[0] == 0xBE and data[1] == 0xDE and len(data) > 4:
-   ```
+### 1. Clone the repo
+```bash
+git clone <repo_url>
+cd discord-stt
+```
+### 2. Install dependencies
+```bash
+poetry install
+```
+If you want to use RoCM (AMD) for pytorch, you will need to manually install the rocm version of torch libs:
+```bash
+poetry run pip install -I torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.3
+```
+### 3. Configure environment
+Copy `.env.example` to `.env` and populate it with your secrets:
+```bash
+cp .env.example .env
+```
+Copy `config.toml.example` to `config.toml` and populate it with your configuration:
+```
+cp .env.example config.toml
+```
 
 ## Usage
 

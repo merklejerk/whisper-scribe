@@ -11,10 +11,10 @@ def _split_comma_separated(value: str) -> list[str]:
     """Helper function to split a comma-separated string into a list."""
     return [item.strip() for item in value.split(",")] if value else []
 
-# Load bot.toml configuration (non-secret values)
-BOT_TOML_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot.toml")
-if os.path.exists(BOT_TOML_PATH):
-    with open(BOT_TOML_PATH, "rb") as f:
+# Load config.toml configuration (non-secret values)
+CONFIG_TOML_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.toml")
+if os.path.exists(CONFIG_TOML_PATH):
+    with open(CONFIG_TOML_PATH, "rb") as f:
         bot_config = tomli.load(f)
 else:
     bot_config = {}
