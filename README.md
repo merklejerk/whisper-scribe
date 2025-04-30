@@ -1,27 +1,12 @@
-# Discord STT Bot
+# Discord D&D Scribe
 
-A lightweight Discord bot that joins a voice channel, records speech, transcribes it locally using OpenAI Whisper, and logs both voice transcriptions and chat messages. Still WIP.
-
-## Features
-
-- Join a Discord voice channel and record speech in real time.
-- Say `!join` anywhere in the server to join the summoner's current voice channel.
-- CLI option to auto‑join on startup (`-j` / `--join`).
-- Silence detection: processes audio when users stop speaking.
-- Local transcription with Whisper (configurable model size).
-- Logs voice transcriptions and text messages to console and persistent session logs.
-- Guild/Server whitelist support.
-
-## TODO
-
-- Still needs small tweaks to VAD.
-- AI-based transcription summary.
+Discord D&D Scribe is a self-hosted Discord bot for real-time, multi-user voice transcription and automated session summarization, designed for tabletop RPGs and collaborative voice sessions. It leverages advanced speech-to-text models (Whisper via PyTorch and Transformers) to transcribe Discord voice channels locally, using voice activity detection (Silero) for accurate speech segmentation. Transcripts are logged in structured NDJSON files, and users can generate comprehensive session wrap-ups, including full transcripts and AI-powered summaries (requires cloud OpenAI key), on demand via a chat command.
 
 ## Requirements
 
-- Python 3.8+  
-- Poetry for dependency management  
-- FFmpeg installed and available in `PATH` (for audio handling)
+- Python 3.13+
+- Poetry for dependency management 
+- OpenAI API key (for session summaries).
 
 ## Installation
 
@@ -56,14 +41,14 @@ poetry run python -m src.cli VOICE_CHANNEL_ID SESSION_NAME
 ```
 
 The bot will instantly join the voice channel you provide and start transcribing to `logs/{SESSION_NAME}`.
-At any time you can say `!wrapup` in the voice channel's text channel to have the bot produce wrapup files.
+At any time you can say `!wrapup` in the voice channel's text channel to have the bot produce wrapup files (transcript + session summary).
 
 ## How It Works
 
-- **Discord Integration:** [py-cord] provides Discord API and voice channel access for real-time audio capture and command handling.
-- **Audio Capture & VAD:** [silero-vad] and [webrtcvad] enable voice activity detection and silence detection for segmenting user speech.
-- **Transcription:** [torch], [torchaudio], and [transformers] power the Whisper model for local speech-to-text transcription.
-- **Wrapups:** [openai] library is used to generate session summaries via GPT models.
+- **Discord Integration:** `py-cord` provides Discord API and voice channel access for real-time audio capture and command handling.
+- **Audio Capture & VAD:** `silero-vad` and `webrtcvad` enable voice activity detection and silence detection for segmenting user speech.
+- **Transcription:** `torch`, `torchaudio`, and `transformers` power the Whisper model for local speech-to-text transcription.
+- **Wrapups:** `openai` library is used to generate session summaries via GPT models.
 
 ## License
 

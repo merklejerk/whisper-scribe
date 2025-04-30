@@ -52,9 +52,6 @@ def validate_config() -> bool:
     if not DISCORD_TOKEN:
         print("Error: DISCORD_TOKEN not found in environment variables or .env file.")
         return False
-    if not OPENAI_API_KEY:
-        print("Error: OPENAI_API_KEY not found in environment variables or .env file.")
-        return False
     return True
 
 if not validate_config():

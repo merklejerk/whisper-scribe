@@ -8,7 +8,7 @@ import traceback
 import re
 
 import src.config as config
-from .processing import process_entries
+from .wrapup import process_entries
 from .logging import add_entry as add_log_entry, load_log
 from .transcriber import Transcriber
 from .voice_capture_sink import VoiceCaptureSink, VoiceMetadata

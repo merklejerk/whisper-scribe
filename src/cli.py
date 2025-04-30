@@ -3,7 +3,7 @@ import asyncio
 from src.bot import DiscordBot
 import src.config as config
 from src.logging import load_log
-from src.processing import process_entries
+from src.wrapup import process_entries
 
 def main():
     parser = argparse.ArgumentParser(description="Discord Bot CLI")
