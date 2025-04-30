@@ -1,6 +1,6 @@
-# Discord D&D Scribe
+# WhisperScribe
 
-Discord D&D Scribe is a self-hosted Discord bot for real-time, multi-user voice transcription and automated session summarization, designed for tabletop RPGs and collaborative voice sessions. It leverages advanced speech-to-text models (Whisper via PyTorch and Transformers) to transcribe Discord voice channels locally, using voice activity detection (Silero) for accurate speech segmentation. Transcripts are logged in structured NDJSON files, and users can generate comprehensive session wrap-ups, including full transcripts and AI-powered summaries (requires cloud OpenAI key), on demand via a chat command.
+WhisperScribe is a self-hosted Discord bot for real-time, multi-user voice transcription and automated session summarization, designed for tabletop RPGs. It leverages advanced speech-to-text models (Whisper via PyTorch and Transformers) to transcribe Discord voice channels locally, using voice activity detection (Silero) for accurate speech segmentation. Transcripts are logged in structured NDJSON files, and users can generate comprehensive session wrap-ups, including full transcripts and AI-powered summaries (requires cloud OpenAI key), on demand via a chat command.
 
 ## Requirements
 
