@@ -19,7 +19,7 @@ cd whisper-scribe
 ```bash
 poetry install
 ```
-If you want to use RoCM (AMD) for pytorch, you will need to manually install the rocm version of torch libs:
+If you want to use GPU acceleration on an AMD card, you will need to manually install the rocm version of pytorch libs:
 ```bash
 poetry run pip install -I torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.3
 ```
@@ -28,9 +28,9 @@ Copy `.env.example` to `.env` and populate it with your secrets:
 ```bash
 cp .env.example .env
 ```
-Copy `config.toml.example` to `config.toml` and populate it with your configuration:
+Copy `config.example.toml` to `config.toml` and populate it with your configuration:
 ```
-cp .env.example config.toml
+cp .config.example.toml config.toml
 ```
 
 ## Usage
