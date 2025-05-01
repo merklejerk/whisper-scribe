@@ -18,10 +18,7 @@ def get_session_log_path(session_name: str) -> str:
     """Returns the path to the session log file."""
     return f"logs/{session_name}.ndjson"
 
-# Reconnect settings
-MAX_RECONNECT_ATTEMPTS = 5
-MAX_RECONNECT_DELAY = 60.0
-INITIAL_RECONNECT_DELAY = 2.0
+MAX_JOIN_TIMEOUT = 10.0  # seconds
 
 class DiscordBot(object):
     session_name: str
@@ -107,39 +104,27 @@ class DiscordBot(object):
             print("Forcibly disconnected old voice client.")
             self._vc = None
 
-        retry_delay = INITIAL_RECONNECT_DELAY
-        for attempt in range(MAX_RECONNECT_ATTEMPTS):
-            try:
-                print(f"Attempting to join voice channel: {voice_channel.name}...")
-                vc = self._vc = await asyncio.wait_for(
-                    voice_channel.connect(reconnect=True, cls=PatchedVoiceClient),
-                    timeout=30.0
-                )
-                print(f"Successfully joined voice channel: {vc.channel.name} (ID: {self.voice_channel_id})")
+        try:
+            print(f"Attempting to join voice channel: {voice_channel.name}...")
+            vc = self._vc = await voice_channel.connect(
+                reconnect=True,
+                cls=PatchedVoiceClient,
+                timeout=MAX_JOIN_TIMEOUT,
+            )
+            print(f"Successfully joined voice channel: {vc.channel.name} (ID: {self.voice_channel_id})")
 
-                await self._sink.start(vc)
-                self._transcriber.start()
-                vc.start_recording(self._sink, self._finished_callback, vc.channel)
-                return
+            await self._sink.start(vc)
+            self._transcriber.start()
+            vc.start_recording(self._sink, self._finished_callback, vc.channel)
+        except:
+            if self._vc and self._vc.is_connected():
+                await self._vc.disconnect(force=True)
+            self._vc = None
+            raise
 
-            except Exception as e:
-                if self._vc and self._vc.is_connected():
-                    await self._vc.disconnect(force=True)
-                print(f"Failed to connect to voice channel {voice_channel.name} (ID: {voice_channel.id}) {attempt}/{MAX_RECONNECT_ATTEMPTS}: {e} {traceback.format_exc()}")
-                retry_delay = min(retry_delay * 2, MAX_RECONNECT_DELAY)
-                await asyncio.sleep(retry_delay)
-
-            finally:
-                self._vc = None
-        RuntimeError(f"Failed to connect to voice channel {voice_channel.name} (ID: {voice_channel.id}) after {MAX_RECONNECT_ATTEMPTS} attempts.")
-
-    async def _finished_callback(self, sink: VoiceCaptureSink, channel: discord.VoiceChannel, *args: Any) -> None:
-        """Called by py-cord when recording unexpectedly stops."""
+    async def _finished_callback(self, sink: VoiceCaptureSink, channel: discord.VoiceChannel) -> None:
+        """Called by py-cord when recording stops."""
         print(f"Warning: Recording stopped unexpectedly in channel {channel.name} (ID: {channel.id}).")
-        if channel.id != self.voice_channel_id:
-            # Not our channel, ignore
-            return
-        asyncio.create_task(self._connect_and_start_recording(channel))
 
     # Called when the bot successfully connects and is ready.
     async def _on_ready(self) -> None:
@@ -157,7 +142,7 @@ class DiscordBot(object):
             content: str,
             timestamp: datetime.datetime,
         ) -> None:
-        print(f"{user_name if user_name else user_id}: {content}")
+        print(f"> {user_name if user_name else user_id}: {content}")
         await add_log_entry(
             log_path=get_session_log_path(self.session_name),
             content=content,

@@ -1,5 +1,6 @@
 import discord
 import nacl
+import traceback
 
 class PatchedVoiceClient(discord.VoiceClient):
     """A subclass of discord.VoiceClient to mitigate instability in py-cord's 2.6.1 `VoiceClient` impl."""
@@ -11,4 +12,5 @@ class PatchedVoiceClient(discord.VoiceClient):
             return super().unpack_audio(data)
         except nacl.exceptions.CryptoError as e:
             print(f"Suppressed VoiceClient CryptoError: {e}")
+            traceback.print_exc()
         return None
