@@ -163,10 +163,6 @@ class VoiceCaptureSink(discord.sinks.Sink):
                             if detected_silence or is_max_size:
                                 raw_audio: bytes = state.speech_buf.getvalue()
                                 user_name = await self._get_user_name(user_id)
-                                if detected_silence:
-                                    print(f"VoiceCaptureSink: Detected silence for user {user_name}. Submitting job...")
-                                else:
-                                    print(f"VoiceCaptureSink: Buffer size exceeded for user {user_name}. Submitting job...")
                                 metadata = VoiceMetadata(
                                     user_id=user_id,
                                     user_name=user_name,

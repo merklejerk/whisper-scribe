@@ -44,7 +44,6 @@ class Transcriber(Generic[MetadataT]):
         if self._pipeline is not None:
             return
 
-        print(f"Transcriber: Lazily initializing Whisper pipeline ({self._model_name})...")
         self._pipeline = pipeline(
             "automatic-speech-recognition",
             model=self._model_name,
@@ -59,6 +58,7 @@ class Transcriber(Generic[MetadataT]):
     
     def start(self):
         """Starts the background processing thread."""
+        self._initialize_pipeline()
         if self._thread is None:
             self._stop_event.clear()
             self._thread = threading.Thread(
@@ -90,8 +90,6 @@ class Transcriber(Generic[MetadataT]):
 
     def _run(self, input_queue: queue.Queue[Optional[AudioProcessingJob[MetadataT]]]):
         """The main loop for the background processing thread."""
-        self._initialize_pipeline()
-
         while not self._stop_event.is_set():
             item = input_queue.get(block=True)
 
@@ -113,10 +111,7 @@ class Transcriber(Generic[MetadataT]):
         item: AudioProcessingJob[MetadataT],
     ):
         metadata, audio_data = item
-        print(f"Transcriber thread: Processing job with metadata {metadata}...")
-
         if not audio_data:
-            print(f"Transcriber thread: Skipping empty audio data.")
             return
 
         # audio_data is 16kHz mono PCM int16 bytes
@@ -126,7 +121,7 @@ class Transcriber(Generic[MetadataT]):
 
         # Transcribe (BLOCKING call within this thread)
         result: AudioPipelineOutput = self._pipeline(
-            { "raw": audio_np, "sampling_rate": TARGET_SR },
+            inputs={ "raw": audio_np, "sampling_rate": TARGET_SR },
             generate_kwargs={
                 "language": "english",
                 "task": "transcribe",
@@ -142,5 +137,3 @@ class Transcriber(Generic[MetadataT]):
                 self._output_queue.put_nowait((metadata, transcription))
             except asyncio.QueueFull:
                 print(f"Transcriber thread: WARNING - Output queue is full. Discarding transcription.")
-        else:
-            print(f"Transcriber thread: Whisper pipeline produced no transcription.")
