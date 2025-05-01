@@ -17,7 +17,7 @@ model = "openai/whisper-small.en"
 # Voice handling configuration
 [voice]
 # Seconds of silence before ending a segment
-silence_threshold_seconds = 1.75
+silence_threshold_seconds = 1.25
 # Voice Activity Detection (VAD) threshold for Silero VAD (0.0-1.0, higher = more strict)
 vad_threshold = 0.55
 # Maximum allowed speech buffer size in bytes before forced processing (0 = disabled)

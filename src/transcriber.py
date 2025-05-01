@@ -1,9 +1,7 @@
-from __future__ import annotations
 import asyncio
 import queue
 import threading
 import numpy as np
-import librosa
 from typing import Optional, Dict, Any, Tuple, TypeAlias, Generic, TypeVar
 from transformers import Pipeline as WhisperPipeline
 from transformers import pipeline
@@ -125,11 +123,6 @@ class Transcriber(Generic[MetadataT]):
         audio_np: np.ndarray = np.frombuffer(audio_data, dtype=np.int16)
         # normalize to float32 in [-1,1]
         audio_np: np.ndarray = audio_np.astype(np.float32) / 32768.0
-        # Trim leading/trailing silence
-        audio_np, _ = librosa.effects.trim(
-            audio_np,
-            top_db=SILENCE_TOP_DB
-        )
 
         # Transcribe (BLOCKING call within this thread)
         result: AudioPipelineOutput = self._pipeline(
@@ -137,9 +130,9 @@ class Transcriber(Generic[MetadataT]):
             generate_kwargs={
                 "language": "english",
                 "task": "transcribe",
-                # "return_timestamps": True,
-                "temperature": 0.05,
+                "temperature": (0.0, 0.2, 0.4),
                 "forced_decoder_ids": None,
+                "logprob_threshold": -1.0,
             },
         )
         transcription: str = result["text"].strip()
