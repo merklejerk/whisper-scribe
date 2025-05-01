@@ -130,7 +130,7 @@ class Transcriber(Generic[MetadataT]):
             generate_kwargs={
                 "language": "english",
                 "task": "transcribe",
-                "temperature": (0.0, 0.2, 0.4),
+                "temperature": (0.0, 0.1, 0.2, 0.4),
                 "forced_decoder_ids": None,
                 "logprob_threshold": -1.0,
             },
