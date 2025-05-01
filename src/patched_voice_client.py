@@ -8,12 +8,12 @@ class PatchedVoiceClient(discord.VoiceClient):
         super().__init__(*args, **kwargs)
         self._crashed = False
 
-    # TODO: Doing some experimation here...
+    # Called on a recv thread spun up by `start_recording()`.
     def unpack_audio(self, data):
         if self._crashed:
             print('still receiving...', data.hex())
         try:
-            return super().unpack_audio(data)
+            super().unpack_audio(data)
         except nacl.exceptions.CryptoError as e:
             self._crashed = True
             print(f"Suppressed VoiceClient CryptoError: {e}")

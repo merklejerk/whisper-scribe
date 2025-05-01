@@ -3,7 +3,7 @@ import asyncio
 from src.bot import DiscordBot
 import src.config as config
 from src.logging import load_log
-from src.wrapup import process_entries
+from src.wrapup import create_wrapup_from_log_entries
 
 def main():
     parser = argparse.ArgumentParser(description="Discord Bot CLI")
@@ -39,7 +39,7 @@ def main():
     elif args.command == "wrapup":
         async def run_wrapup():
             entries = await load_log(args.logfile)
-            await process_entries(entries, args.name)
+            await create_wrapup_from_log_entries(entries, args.name)
         asyncio.run(run_wrapup())
 
 if __name__ == "__main__":

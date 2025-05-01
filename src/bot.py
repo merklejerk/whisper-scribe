@@ -4,11 +4,11 @@ import asyncio
 import datetime
 from typing import Optional, Any
 import asyncio
-import traceback
 import re
+import os # Added import
 
 import src.config as config
-from .wrapup import process_entries
+from .wrapup import create_wrapup_from_log_entries, WrapupFiles # Added WrapupFiles import
 from .logging import add_entry as add_log_entry, load_log
 from .transcriber import Transcriber
 from .voice_capture_sink import VoiceCaptureSink, VoiceMetadata
@@ -254,10 +254,31 @@ class DiscordBot(object):
 
     async def _wrapup_command(self, ctx: Any):
         """Process the current session log and generate a D&D 5e outline."""
-        await ctx.send("Processing session, please wait...")
+        await ctx.send("🖨️ Generating wrapup...")
         print(f"Generating wrapup for session {self.session_name}...")
-        await process_entries(
-            await load_log(get_session_log_path(self.session_name)),
-            self.session_name,
-        )
-        print("Wrapup complete.")
+        
+        log_path = get_session_log_path(self.session_name)
+        if not os.path.exists(log_path):
+            # Nothing to do.
+            ctx.send(f"No session log to wrap up.")
+            return
+        
+        try:
+            wrapup_files = await create_wrapup_from_log_entries(
+                await load_log(log_path),
+                self.session_name,
+            )
+            print("Wrapup generation complete.")
+
+            files_to_upload = [
+                discord.File(wrapup_files.chatlog_path),
+            ]
+            if wrapup_files.outline_path:
+                files_to_upload.append(discord.File(wrapup_files.outline_path))
+
+            print(f"Uploading {len(files_to_upload)} files to channel {ctx.channel.id}...")
+            await ctx.send("🎁", files=files_to_upload)
+
+        except Exception as e:
+            await ctx.send(f"Failed to generate wrapup.")
+            raise

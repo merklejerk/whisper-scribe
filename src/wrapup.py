@@ -8,7 +8,7 @@ import src.config as config
 from .logging import LogEntry
 
 @dataclass
-class ProcessOutput:
+class WrapupFiles:
     outline_path: Optional[str]
     chatlog_path: str
 
@@ -86,7 +86,7 @@ async def _create_summary(chatlog_rows: List[str], name: str) -> Optional[str]:
         await mdfile.write(outline)
     return md_path
 
-async def process_entries(entries: List[LogEntry], name: str) -> ProcessOutput:
+async def create_wrapup_from_log_entries(entries: List[LogEntry], name: str) -> WrapupFiles:
     """
     Given a list of log entries, sorts by timestamp, writes a chatlog, and sends to OpenAI for processing.
     The 'name' parameter determines the filenames it writes to.
@@ -96,4 +96,4 @@ async def process_entries(entries: List[LogEntry], name: str) -> ProcessOutput:
     chatlog_rows = [f"{config.USERNAME_MAP.get(e.user_name, e.user_name)}: {e.content}" for e in entries]
     chatlog_path = await _write_chatlog(chatlog_rows, name)
     md_path = await _create_summary(chatlog_rows, name)
-    return ProcessOutput(outline_path=md_path, chatlog_path=chatlog_path)
+    return WrapupFiles(outline_path=md_path, chatlog_path=chatlog_path)
