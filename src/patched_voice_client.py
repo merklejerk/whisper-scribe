@@ -14,6 +14,10 @@ class PatchedVoiceClient(discord.VoiceClient):
             print('still receiving...', data.hex())
         try:
             super().unpack_audio(data)
+        except IndexError as e:
+            print(self.mode, data.hex())
+            print(f"Suppressed VoiceClient IndexError: {e}")
+            traceback.print_exc()
         except nacl.exceptions.CryptoError as e:
             self._crashed = True
             print(f"Suppressed VoiceClient CryptoError: {e}")

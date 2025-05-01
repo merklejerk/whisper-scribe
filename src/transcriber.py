@@ -5,6 +5,7 @@ import numpy as np
 from typing import Optional, Dict, Any, Tuple, TypeAlias, Generic, TypeVar
 from transformers import Pipeline as WhisperPipeline
 from transformers import pipeline
+from .debug_utils import debug_play_audio # Import the function
 
 # Module-level audio constants
 TARGET_SR = 16000  # expected incoming sample rate
@@ -18,6 +19,7 @@ AudioPipelineOutput = Dict[str, Any]
 AudioProcessingJob: TypeAlias = Tuple[MetadataT, bytes]
 # Result now returns MetadataT and transcription string
 TranscriptionResult: TypeAlias = Tuple[MetadataT, str]
+
 
 class Transcriber(Generic[MetadataT]):
     """Handles audio transcription sequentially, passing opaque metadata through."""
@@ -119,16 +121,20 @@ class Transcriber(Generic[MetadataT]):
         # normalize to float32 in [-1,1]
         audio_np: np.ndarray = audio_np.astype(np.float32) / 32768.0
 
-        # Transcribe (BLOCKING call within this thread)
+        debug_play_audio(audio_np, TARGET_SR)
+
+        kwargs = {
+            "temperature": (0.025, 0.1, 0.2, 0.4),
+            "forced_decoder_ids": None,
+            "logprob_threshold": -1.0,
+        }
+        if not self._model_name.endswith(".en"):
+            kwargs["language"] = "english"
+            kwargs["task"] = "transcribe"
+
         result: AudioPipelineOutput = self._pipeline(
             inputs={ "raw": audio_np, "sampling_rate": TARGET_SR },
-            generate_kwargs={
-                "language": "english",
-                "task": "transcribe",
-                "temperature": (0.025, 0.1, 0.2, 0.4),
-                "forced_decoder_ids": None,
-                "logprob_threshold": -1.0,
-            },
+            generate_kwargs=kwargs,
         )
         transcription: str = result["text"].strip()
 

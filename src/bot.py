@@ -105,6 +105,8 @@ class DiscordBot(object):
             self._vc = None
 
         try:
+            print(f"Starting transcriber...")
+            self._transcriber.start()
             print(f"Attempting to join voice channel: {voice_channel.name}...")
             vc = self._vc = await voice_channel.connect(
                 reconnect=True,
@@ -114,7 +116,6 @@ class DiscordBot(object):
             print(f"Successfully joined voice channel: {vc.channel.name} (ID: {self.voice_channel_id})")
 
             await self._sink.start(vc)
-            self._transcriber.start()
             vc.start_recording(self._sink, self._finished_callback, vc.channel)
         except:
             if self._vc and self._vc.is_connected():
