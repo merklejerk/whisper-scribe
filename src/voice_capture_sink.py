@@ -180,7 +180,7 @@ class VoiceCaptureSink(discord.sinks.Sink):
                                 state.speech_buf.truncate(0)
                         if state.last_noise and (now - state.last_noise).total_seconds() > PRUNE_THRESHOLD_SECONDS:
                             self.user_states.pop(user_id, None)
-                await asyncio.sleep(0.33)
+                await asyncio.sleep(0.1)
         finally:
             print("VoiceCaptureSink: heartbeat loop finished.")
 
