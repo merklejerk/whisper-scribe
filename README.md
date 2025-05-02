@@ -5,8 +5,8 @@ WhisperScribe is a self-hosted Discord bot for live, multi-user voice transcript
 ## Requirements
 
 - Python 3.13+
-- Poetry for dependency management 
-- OpenAI API key (for session summaries).
+- Poetry for dependency management
+- OpenAI API key (for session summaries)
 
 ## Installation
 
@@ -42,8 +42,8 @@ Run the bot with Poetry:
 poetry run python -m src.cli VOICE_CHANNEL_ID SESSION_NAME
 ```
 
-The bot will instantly join the voice channel you provide and start transcribing to `logs/{SESSION_NAME}`.
-At any time you can say `!wrapup` in the voice channel's text channel to have the bot produce wrapup files (transcript + session summary).
+The bot will instantly join the voice channel you provide and start transcribing to `logs/{SESSION_NAME}.ndjson`.
+At any time you can say `!wrapup` in the voice channel's text channel to have the bot produce wrapup files (transcript + session summary), which get posted to chat and also saved to `wrapup/`.
 
 ## How It Works
 
