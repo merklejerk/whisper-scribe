@@ -5,7 +5,8 @@ import numpy as np
 from typing import Optional, Dict, Any, Tuple, TypeAlias, Generic, TypeVar
 from transformers import Pipeline as WhisperPipeline
 from transformers import pipeline
-from .debug_utils import debug_play_audio # Import the function
+from .debug_utils import debug_play_audio
+from .config import WHISPER_LOGPROB_THRESHOLD
 
 # Module-level audio constants
 TARGET_SR = 16000  # expected incoming sample rate
@@ -124,14 +125,21 @@ class Transcriber(Generic[MetadataT]):
         debug_play_audio(audio_np, TARGET_SR)
 
         kwargs = {
-            "temperature": (0.025, 0.1, 0.2, 0.4),
+            "temperature": (0., 0.1, 0.2),
             "forced_decoder_ids": None,
-            "logprob_threshold": -1.0,
+            "logprob_threshold": WHISPER_LOGPROB_THRESHOLD,
+            "no_speech_threshold": 0.6,
+            "compression_ratio_threshold": 2.4,
+            # "max_new_tokens": 448,
+            "num_beams": 1,
+            "condition_on_prev_tokens": False,
+            "return_timestamps": True,
         }
         if not self._model_name.endswith(".en"):
             kwargs["language"] = "english"
             kwargs["task"] = "transcribe"
 
+        print(kwargs)
         result: AudioPipelineOutput = self._pipeline(
             inputs={ "raw": audio_np, "sampling_rate": TARGET_SR },
             generate_kwargs=kwargs,

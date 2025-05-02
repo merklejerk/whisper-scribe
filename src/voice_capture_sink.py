@@ -18,10 +18,15 @@ from .config import SILENCE_THRESHOLD_SECONDS, VAD_THRESHOLD, MAX_SPEECH_BUF_BYT
 # Module-level audio constants
 SOURCE_SR = 48000  # Discord's PCM sample rate
 TARGET_SR = 16000  # Required sample rate for VAD and model
+BYTES_PER_SAMPLE = 2 # int16
+
+# VAD constants
+MIN_DURATION_FOR_VAD_SECONDS = 0.5
+MIN_BYTES_FOR_VAD = int(TARGET_SR * MIN_DURATION_FOR_VAD_SECONDS * BYTES_PER_SAMPLE)
 
 # raw-buffer constants for custom VAD pre-buffering
-RAW_BUFFER_DURATION = 0.5  # seconds
-RAW_BUFFER_MAX_BYTES = int(TARGET_SR * RAW_BUFFER_DURATION * 2)
+RAW_BUFFER_DURATION = 1.0  # seconds
+RAW_BUFFER_MAX_BYTES = int(TARGET_SR * RAW_BUFFER_DURATION * BYTES_PER_SAMPLE)
 
 PRUNE_THRESHOLD_SECONDS = 5.
 
@@ -69,11 +74,15 @@ class VoiceCaptureSink(discord.sinks.Sink):
         self._cached_user_names = {}
         vad_model = load_silero_vad()
         self._get_speech_timestamps = lambda audio: \
-            get_speech_timestamps(audio, model=vad_model, threshold=VAD_THRESHOLD, min_speech_duration_ms=200)
+            get_speech_timestamps(audio, model=vad_model, threshold=VAD_THRESHOLD, min_speech_duration_ms=250)
         self._heartbeat_task = None
 
     def _has_voice(self, audio_16khz: bytes) -> bool:
         """Check if 16kHz mono int16 audio contains speech using Silero VAD"""
+        # Use the module-level constant
+        if len(audio_16khz) < MIN_BYTES_FOR_VAD:
+            return False
+
         # convert raw PCM int16 to normalized float32 waveform
         samples = np.frombuffer(audio_16khz, dtype=np.int16).astype(np.float32) / 32768.0
         waveform = torch.from_numpy(samples).squeeze(0)

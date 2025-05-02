@@ -30,6 +30,7 @@ USERNAME_MAP: Final[dict[str, str]] = bot_config.get("username_map", {})
 
 # Whisper Configuration
 WHISPER_MODEL: Final[str] = bot_config.get("whisper", {}).get("model", "openai/whisper-small.en")
+WHISPER_LOGPROB_THRESHOLD: Final[float] = bot_config.get("whisper", {}).get("logprob_threshold", -1.0)
 
 # Voice Handling Configuration
 SILENCE_THRESHOLD_SECONDS: Final[float] = bot_config.get("voice", {}).get("silence_threshold_seconds", 2)
