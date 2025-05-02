@@ -1,6 +1,6 @@
 # WhisperScribe
 
-WhisperScribe is a self-hosted Discord bot for real-time, multi-user voice transcription and automated session summarization, designed for tabletop RPGs. It leverages advanced speech-to-text models (Whisper via PyTorch and Transformers) to transcribe Discord voice channels locally, using voice activity detection (Silero) for accurate speech segmentation. Transcripts are logged in structured NDJSON files, and users can generate comprehensive session wrap-ups, including full transcripts and AI-powered summaries (requires cloud OpenAI key), on demand via a chat command.
+WhisperScribe is a self-hosted Discord bot for live, multi-user voice transcription and automated session summarization, designed for tabletop RPGs. It leverages advanced speech-to-text models (Whisper via PyTorch and Transformers) to transcribe Discord voice channels locally, using voice activity detection (Silero) for accurate speech segmentation. Transcripts are logged in structured NDJSON files, and users can generate comprehensive session wrap-ups, including full transcripts and AI-powered summaries (requires cloud OpenAI key), on demand via a chat command.
 
 ## Requirements
 
@@ -21,7 +21,7 @@ poetry install
 ```
 If you want to use GPU acceleration on an AMD card, you will need to manually install the rocm version of pytorch libs:
 ```bash
-poetry run pip install -I torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.3
+poetry run pip install -I 'torch' 'torchaudio' --index-url https://download.pytorch.org/whl/rocm6.3
 ```
 ### 3. Configure environment
 Copy `.env.example` to `.env` and populate it with your secrets:
@@ -33,7 +33,7 @@ Copy `config.example.toml` to `config.toml` and populate it with your configurat
 cp .config.example.toml config.toml
 ```
 
-If you're planning on running this CPU-only, I recommend setting your whisper `model` to `openai/whisper-small.en` for real-time transcription. If you've got a compatible GPU, `openai/whisper-large-v3-turbo` works fantastic.
+If you're planning on running this CPU-only, I recommend setting your whisper `model` to `openai/whisper-small.en` for near real-time transcription. If you've got a compatible GPU, `openai/whisper-large-v3-turbo` works fantastic.
 
 ## Usage
 
@@ -49,7 +49,7 @@ At any time you can say `!wrapup` in the voice channel's text channel to have th
 
 - **Discord Integration:** `py-cord` provides Discord API and voice channel access for real-time audio capture and command handling.
 - **Audio Capture & VAD:** `silero-vad` and `webrtcvad` enable voice activity detection and silence detection for segmenting user speech.
-- **Transcription:** `torch`, `torchaudio`, and `transformers` power the Whisper model for local speech-to-text transcription.
+- **Transcription:** `torch` and `transformers` power the Whisper model for local speech-to-text transcription.
 - **Wrapups:** `openai` library is used to generate session summaries via GPT models.
 
 ## License

@@ -6,15 +6,16 @@
 # List of (numeric) user IDs allowed to use commands
 allowed_commanders = []
 
-# Mapping of usernames to character names
-[username_map]
-
 # Whisper model configuration
 [whisper]
 # Model name for speech-to-text
 model = "openai/whisper-small.en"
 # Log probability threshold for Whisper transcription (lower = more speculative)
 logprob_threshold = -1.0
+# No speech threshold for Whisper (0.0-1.0, lower = more strict about detecting speech)
+no_speech_threshold = 0.2
+# Initial prompt for Whisper to condition the transcription. You can add a few proper nouns here as hints.
+prompt = "This is a game of Dungeons and Dragons."
 
 # Voice handling configuration
 [voice]
@@ -26,10 +27,14 @@ vad_threshold = 0.66
 max_speech_buf_bytes = 2097152  # 2MB default, adjust as needed
 
 # Configuration for generating outlines.
-[llm]
+[wrapup]
 # OpenAI model name
 model = "gpt-4o-mini"
-# List of proper nouns to attempt to recognize
-proper_nouns = []
 # List of tips for the wrapup LLM.
 tips = []
+
+# Mapping of usernames to character names
+[wrapup.username_map]
+
+# Mapping of phrases to remap in the chat log.
+[wrapup.phrase_map]

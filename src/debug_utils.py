@@ -61,5 +61,5 @@ def debug_play_audio(audio_np: np.ndarray, input_sr: int):
             return
 
         # Play on the selected device
-        sd.wait() # Wait for past playback to finish
         sd.play(audio_resampled, samplerate=output_sr, device=target_device_index)
+        sd.wait()

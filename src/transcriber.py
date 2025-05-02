@@ -1,12 +1,19 @@
 import asyncio
 import queue
 import threading
+import torch
 import numpy as np
 from typing import Optional, Dict, Any, Tuple, TypeAlias, Generic, TypeVar
-from transformers import Pipeline as WhisperPipeline
-from transformers import pipeline
+from transformers import (
+    Pipeline as WhisperPipeline,
+    pipeline,
+    WhisperForConditionalGeneration,
+    WhisperProcessor,
+    WhisperTokenizerFast,
+    WhisperFeatureExtractor,
+)
 from .debug_utils import debug_play_audio
-from .config import WHISPER_LOGPROB_THRESHOLD
+from .config import WHISPER_LOGPROB_THRESHOLD, WHISPER_NO_SPEECH_THRESHOLD, WHISPER_PROMPT
 
 # Module-level audio constants
 TARGET_SR = 16000  # expected incoming sample rate
@@ -25,33 +32,54 @@ TranscriptionResult: TypeAlias = Tuple[MetadataT, str]
 class Transcriber(Generic[MetadataT]):
     """Handles audio transcription sequentially, passing opaque metadata through."""
 
-    _pipeline: Optional[WhisperPipeline]
+    _pipe: Optional[WhisperPipeline]
     _output_queue: asyncio.Queue[TranscriptionResult[MetadataT]]
     _input_queue: queue.Queue[Optional[AudioProcessingJob[MetadataT]]]
     _thread: Optional[threading.Thread]
     _stop_event: threading.Event
     _model_name: str
+    _device: str
+    _torch_dtype: torch.dtype
+    _prompt_ids: Optional[torch.Tensor]
 
     # Output queue type hint updated
     def __init__(self, output_queue: asyncio.Queue[TranscriptionResult[MetadataT]], model_name: str, device: str = "cpu"):
-        self._pipeline = None
+        self._pipe = None
         self._output_queue = output_queue
         self._model_name = model_name
         self._input_queue = queue.Queue()
         self._thread = None
         self._stop_event = threading.Event()
         self._device = device
+        self._torch_dtype = torch.float16 if self._device != "cpu" and torch.cuda.is_available() else torch.float32
+        self._prompt_ids = None
+        self._processor = None
 
     def _initialize_pipeline(self):
         """Initializes the Whisper pipeline using the configured model name."""
-        if self._pipeline is not None:
+        if self._pipe is not None:
             return
-
-        self._pipeline = pipeline(
+        
+        model = WhisperModelPatched.from_pretrained(
+            self._model_name,
+            torch_dtype=self._torch_dtype,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+        )
+        self._processor = WhisperProcessor.from_pretrained(
+            self._model_name,
+            tokenizer=WhisperTokenizerFast.from_pretrained(self._model_name),
+            feature_extractor=WhisperFeatureExtractor.from_pretrained(self._model_name, return_attention_mask=True),
+        )
+        if WHISPER_PROMPT:
+            self._prompt_ids = self._processor.get_prompt_ids(WHISPER_PROMPT, return_tensors="pt").to(self._device)
+        self._pipe = pipeline(
             "automatic-speech-recognition",
-            model=self._model_name,
+            model=model,
+            tokenizer=self._processor.tokenizer,
+            feature_extractor=self._processor.feature_extractor,
+            torch_dtype=self._torch_dtype,
             device=self._device,
-            chunk_length_s=30,
         )
         print(f"Transcriber: Whisper pipeline ({self._model_name}) initialized successfully.")
 
@@ -102,7 +130,6 @@ class Transcriber(Generic[MetadataT]):
                     break
                 self._process_item(item)
             except Exception as e:
-                # Handle exceptions in processing
                 print(f"Transcriber thread: Exception occurred while processing item: {e}")
                 raise
             finally:
@@ -118,31 +145,35 @@ class Transcriber(Generic[MetadataT]):
             return
 
         # audio_data is 16kHz mono PCM int16 bytes
+        np_type = np.float32 if self._torch_dtype == torch.float32 else np.float16
         audio_np: np.ndarray = np.frombuffer(audio_data, dtype=np.int16)
-        # normalize to float32 in [-1,1]
-        audio_np: np.ndarray = audio_np.astype(np.float32) / 32768.0
+        # normalize to [-1,1]
+        audio_np: np.ndarray = audio_np.astype(np_type) / 32768
 
         debug_play_audio(audio_np, TARGET_SR)
 
         kwargs = {
-            "temperature": (0., 0.1, 0.2),
+            "temperature": (0., 0.1, 0.25, 0.5),
             "forced_decoder_ids": None,
             "logprob_threshold": WHISPER_LOGPROB_THRESHOLD,
-            "no_speech_threshold": 0.6,
-            "compression_ratio_threshold": 2.4,
-            # "max_new_tokens": 448,
-            "num_beams": 1,
-            "condition_on_prev_tokens": False,
-            "return_timestamps": True,
+            "compression_ratio_threshold": 1.35,
+            "no_speech_threshold": WHISPER_NO_SPEECH_THRESHOLD,
+            "condition_on_prev_tokens": True,
         }
+        if self._prompt_ids is not None:
+            kwargs["prompt_ids"] = self._prompt_ids
+            kwargs["prompt_condition_type"] = "first-segment"
         if not self._model_name.endswith(".en"):
             kwargs["language"] = "english"
             kwargs["task"] = "transcribe"
 
-        print(kwargs)
-        result: AudioPipelineOutput = self._pipeline(
-            inputs={ "raw": audio_np, "sampling_rate": TARGET_SR },
+        # TODO: Pass in attention mask.
+        result: AudioPipelineOutput = self._pipe(
+            inputs=audio_np,
             generate_kwargs=kwargs,
+            chunk_length_s=30,
+            batch_size=1,
+            return_timestamps=False,
         )
         transcription: str = result["text"].strip()
 
@@ -151,3 +182,10 @@ class Transcriber(Generic[MetadataT]):
                 self._output_queue.put_nowait((metadata, transcription))
             except asyncio.QueueFull:
                 print(f"Transcriber thread: WARNING - Output queue is full. Discarding transcription.")
+
+class WhisperModelPatched(WhisperForConditionalGeneration):
+    """A subclass of WhisperForConditionalGeneration to override the forward method to fix
+        a bug that occurs when using `no_speech_threshold`."""
+    def forward(self, *args, **kwargs):
+        kwargs.pop('input_ids', None)
+        return super().forward(*args, **kwargs)

@@ -123,9 +123,10 @@ class DiscordBot(object):
             self._vc = None
             raise
 
-    async def _finished_callback(self, sink: VoiceCaptureSink, channel: discord.VoiceChannel) -> None:
+    async def _finished_callback(self, channel: discord.VoiceChannel) -> None:
         """Called by py-cord when recording stops."""
-        print(f"Warning: Recording stopped unexpectedly in channel {channel.name} (ID: {channel.id}).")
+        print(f"Warning: Recording stopped unexpectedly in channel {channel.name} (ID: {channel.id})!")
+        await self._connect_and_start_recording(channel)
 
     # Called when the bot successfully connects and is ready.
     async def _on_ready(self) -> None:

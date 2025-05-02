@@ -25,12 +25,12 @@ DISCORD_TOKEN: Final[Optional[str]] = os.getenv("DISCORD_TOKEN")
 ALLOWED_GUILD_IDS: Final[Optional[list[int]]] = bot_config.get("discord", {}).get("allowed_guild_ids")
 # Whitelisted command givers.
 ALLOWED_COMMANDERS: Final[Optional[list[int]]] = bot_config.get("discord", {}).get("allowed_commanders")
-# Username remapping for chatlog
-USERNAME_MAP: Final[dict[str, str]] = bot_config.get("username_map", {})
 
 # Whisper Configuration
 WHISPER_MODEL: Final[str] = bot_config.get("whisper", {}).get("model", "openai/whisper-small.en")
 WHISPER_LOGPROB_THRESHOLD: Final[float] = bot_config.get("whisper", {}).get("logprob_threshold", -1.0)
+WHISPER_NO_SPEECH_THRESHOLD: Final[float] = bot_config.get("whisper", {}).get("no_speech_threshold", 0.2)
+WHISPER_PROMPT: Final[str] = bot_config.get("whisper", {}).get("prompt", "")
 
 # Voice Handling Configuration
 SILENCE_THRESHOLD_SECONDS: Final[float] = bot_config.get("voice", {}).get("silence_threshold_seconds", 2)
@@ -41,11 +41,12 @@ MAX_SPEECH_BUF_BYTES: Final[int] = bot_config.get("voice", {}).get("max_speech_b
 OPENAI_API_KEY: Final[str] = os.getenv("OPENAI_API_KEY")
 
 # OpenAI GPT Model for summarization
-OPENAI_GPT_MODEL: Final[str] = bot_config.get("llm", {}).get("model", "gpt-4o-mini")
-
-PROPER_NOUNS: Final[Optional[list[str]]] = bot_config.get("llm", {}).get("proper_nouns")
-
-TIPS: Final[Optional[list[str]]] = bot_config.get("llm", {}).get("tips")
+OPENAI_GPT_MODEL: Final[str] = bot_config.get("wrapup", {}).get("model", "gpt-4o-mini")
+TIPS: Final[Optional[list[str]]] = bot_config.get("wrapup", {}).get("tips")
+# Remapping of phrases in the chatlog.
+PHRASE_MAP: Final[Optional[list[str]]] = bot_config.get("wrapup.phrase_map", {})
+# Username remapping for chatlog
+USERNAME_MAP: Final[dict[str, str]] = bot_config.get("wrapup.username_map", {})
 
 # Validation
 def validate_config() -> bool:
