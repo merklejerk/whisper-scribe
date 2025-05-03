@@ -32,7 +32,7 @@ def pcm16_to_norm_waveform(audio: bytes, source_sr: int, target_sr: int) -> np.n
         resampled = resample_poly(mono, target_sr, source_sr)
     else:
         resampled = mono
-    return np.clip(resampled, -32768, 32767).astype(np.float32) / 32768.0
+    return (resampled / 32768.0).clip(-1.0, 1.0).astype(np.float32)
 
 def bandpass_filter(
     signal: np.ndarray,

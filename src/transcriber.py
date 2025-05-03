@@ -145,18 +145,17 @@ class Transcriber(Generic[MetadataT]):
         if len(audio_np) == 0:
             return
 
-        debug_play_audio(audio_np, TARGET_SR)
+        # debug_play_audio(audio_np, TARGET_SR)
         # Perform pre-processing on the audio data
         audio_np = rms_normalize(bandpass_filter(
-            pre_emphasis(audio_np, 0.85),
+            pre_emphasis(audio_np, 0.75),
             TARGET_SR,
-            order=4,
+            order=5,
         )).clip(-1.0, 1.0)
-        debug_play_audio(audio_np, TARGET_SR)
+        # debug_play_audio(audio_np, TARGET_SR)
         # Convert to the correct dtype for Whisper
         np_type = np.float32 if self._torch_dtype == torch.float32 else np.float16
         audio_np: np.ndarray = audio_np.astype(np_type)
-
 
         kwargs = {
             "temperature": (0., 0.1, 0.25, 0.5),
