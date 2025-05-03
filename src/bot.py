@@ -66,6 +66,7 @@ class DiscordBot(object):
 
         # Regiser commands.
         self._client.add_command(Command(self._wrapup_command, name='wrapup'))
+        self._client.add_command(Command(self._log_command, name='log'))  # Add log command
         # Register listeners.
         self._client.add_listener(self._on_message, 'on_message')
         self._client.add_listener(self._on_ready, 'on_ready')
@@ -284,3 +285,21 @@ class DiscordBot(object):
         except Exception as e:
             await ctx.send(f"Failed to generate wrapup.")
             raise
+
+    async def _log_command(self, ctx: Any):
+        """Generate and post only the wrapup chatlog for the current session."""
+        await ctx.send("🖨️ Generating chatlog...")
+        print(f"Generating chatlog for session {self.session_name}...")
+        log_path = get_session_log_path(self.session_name)
+        if not os.path.exists(log_path):
+            await ctx.send(f"No session log to generate chatlog from.")
+            return
+        wrapup_files = await create_wrapup_from_log_entries(
+            await load_log(log_path),
+            self.session_name,
+            outline=False  # Only generate chatlog, not outline
+        )
+        print("Chatlog generation complete.")
+        files_to_upload = [discord.File(wrapup_files.chatlog_path)]
+        print(f"Uploading chatlog to channel {ctx.channel.id}...")
+        await ctx.send("📝", files=files_to_upload)

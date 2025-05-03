@@ -1,34 +1,35 @@
 import discord
 import numpy as np
-import io
 from collections import defaultdict
 import datetime
 import asyncio
 from typing import Optional, DefaultDict, Tuple
-from scipy.signal import resample_poly
 from typing import Optional, DefaultDict, Tuple
 import asyncio
-import torch
 from silero_vad import load_silero_vad, get_speech_timestamps
 from dataclasses import dataclass, field
 import threading
 
-from .config import SILENCE_THRESHOLD_SECONDS, VAD_THRESHOLD, MAX_SPEECH_BUF_BYTES
+from .config import SILENCE_THRESHOLD_SECONDS, VAD_THRESHOLD, MAX_SPEECH_BUF_SECONDS
+from .waveform_utils import pcm16_to_norm_waveform, has_sound
 
 # Module-level audio constants
 SOURCE_SR = 48000  # Discord's PCM sample rate
 TARGET_SR = 16000  # Required sample rate for VAD and model
-BYTES_PER_SAMPLE = 2 # int16
+BYTES_PER_SAMPLE = 4 # float32
 
 # VAD constants
-MIN_DURATION_FOR_VAD_SECONDS = 0.5
-MIN_BYTES_FOR_VAD = int(TARGET_SR * MIN_DURATION_FOR_VAD_SECONDS * BYTES_PER_SAMPLE)
+MIN_DURATION_FOR_VAD_SECONDS = 0.750
+MIN_LENGTH_FOR_VAD = int(TARGET_SR * MIN_DURATION_FOR_VAD_SECONDS)
 
 # raw-buffer constants for custom VAD pre-buffering
 RAW_BUFFER_DURATION = 1.0  # seconds
-RAW_BUFFER_MAX_BYTES = int(TARGET_SR * RAW_BUFFER_DURATION * BYTES_PER_SAMPLE)
+RAW_BUFFER_MAX_LENGTH = int(TARGET_SR * RAW_BUFFER_DURATION)
 
 PRUNE_THRESHOLD_SECONDS = 5.
+
+if RAW_BUFFER_DURATION < MIN_DURATION_FOR_VAD_SECONDS:
+    raise ValueError(f"RAW_BUFFER_DURATION ({RAW_BUFFER_DURATION}) must be greater than MIN_DURATION_FOR_VAD_SECONDS ({MIN_DURATION_FOR_VAD_SECONDS})")
 
 @dataclass
 class VoiceMetadata:
@@ -42,10 +43,43 @@ class VoiceMetadata:
         """String representation of VoiceMetadata."""
         return f"VoiceMetadata(user_name={self.user_name}, capture_time={self.capture_time.isoformat()}, ...)"
 
+class AudioBuffer(object):
+    array: np.ndarray
+    pos: int
+
+    def __init__(self):
+        self.array = np.zeros((0,), dtype=np.float32)
+        self.pos = 0
+    
+    def get_contents_slice(self) -> np.ndarray:
+        """Get the contents of the buffer."""
+        return self.array[:self.pos]
+    
+    def write(self, data: np.ndarray) -> None:
+        """Write data to the buffer, expanding it if necessary."""
+        end = self.pos + len(data)
+        if end > len(self.array):
+            new_size = max(len(self.array) * 2, end)
+            self.expand(new_size - len(self.array))
+        self.array[self.pos:end] = data
+        self.pos += len(data)
+    
+    def expand(self, n: int) -> None:
+        """Expand the size of the buffer."""
+        if n > 0:
+            self.array.resize((len(self.array) + n,))
+    
+    def shift(self, n: int) -> int:
+        """Shift the buffer contents to the left by n items."""
+        if n > 0:
+            self.array[:self.pos - n] = self.array[n:self.pos]
+            self.pos -= n
+        return self.pos
+    
 @dataclass
 class UserState:
-    speech_buf: io.BytesIO
-    vad_buf: io.BytesIO
+    speech_buf: AudioBuffer
+    raw_buf: AudioBuffer
     first_spoke: Optional[datetime.datetime] = None
     last_spoke: Optional[datetime.datetime] = None
     last_noise: Optional[datetime.datetime] = None
@@ -67,8 +101,8 @@ class VoiceCaptureSink(discord.sinks.Sink):
         # per-user audio state
         self.user_states: DefaultDict[int, UserState] = defaultdict(
             lambda: UserState(
-                speech_buf=io.BytesIO(),
-                vad_buf=io.BytesIO(),
+                speech_buf=AudioBuffer(),
+                raw_buf=AudioBuffer(),
             )
         )
         self._cached_user_names = {}
@@ -77,71 +111,47 @@ class VoiceCaptureSink(discord.sinks.Sink):
             get_speech_timestamps(audio, model=vad_model, threshold=VAD_THRESHOLD, min_speech_duration_ms=250)
         self._heartbeat_task = None
 
-    def _has_voice(self, audio_16khz: bytes) -> bool:
-        """Check if 16kHz mono int16 audio contains speech using Silero VAD"""
-        # Use the module-level constant
-        if len(audio_16khz) < MIN_BYTES_FOR_VAD:
+    def _has_voice(self, norm_audio: np.ndarray) -> bool:
+        """Check if normalized float32 audio contains speech using Silero VAD"""
+        if len(norm_audio) < MIN_LENGTH_FOR_VAD:
             return False
-
-        # convert raw PCM int16 to normalized float32 waveform
-        samples = np.frombuffer(audio_16khz, dtype=np.int16).astype(np.float32) / 32768.0
-        waveform = torch.from_numpy(samples).squeeze(0)
-        # get speech timestamps from Silero VAD
-        speech_ts = self._get_speech_timestamps(waveform)
-
+        speech_ts = self._get_speech_timestamps(norm_audio)
         return len(speech_ts) > 0
-
-    def _convert_audio(self, audio: bytes) -> bytes:
-        """Convert raw 48kHz stereo PCM int16 audio to 16kHz mono PCM int16"""
-        samples = np.frombuffer(audio, dtype=np.int16).reshape(-1, 2)
-        mono = np.mean(samples.astype(np.float32), axis=1)
-        resampled = resample_poly(mono, TARGET_SR, SOURCE_SR)
-        pcm16 = np.clip(resampled, -32768, 32767).astype(np.int16)
-        return pcm16.tobytes()
 
     # Gets called on another thread.
     def write(self, data: bytes, user_id: Optional[int]) -> None:
         """Buffer raw audio until voice detected, then commit to speech buffer."""
         if user_id is None:
             return
-        audio16 = self._convert_audio(data)
+        audio_np = pcm16_to_norm_waveform(data, SOURCE_SR, TARGET_SR)
         state = self.user_states[user_id]
         # synchronize buffer access
         with state.lock:
             speech_buf = state.speech_buf
-            vad_buf = state.vad_buf
+            raw_buf = state.raw_buf
             state.last_noise = datetime.datetime.now(datetime.timezone.utc)
 
-            # accumulate raw pre-speech buffer
-            vad_buf.seek(0, io.SEEK_END)
-            vad_buf.write(audio16)
-            # trim if exceeds max size
-            if vad_buf.tell() > RAW_BUFFER_MAX_BYTES:
-                vad_buf.seek(0)
-                buf_data = vad_buf.getvalue()[-RAW_BUFFER_MAX_BYTES:]
-                vad_buf.truncate(0)
-                vad_buf.write(buf_data)
+            # accumulate raw pre-speech buffer and perform VAD check.
+            raw_buf.write(audio_np)
+            is_speaking = self._has_voice(raw_buf.get_contents_slice())
+            was_speaking = state.last_spoke is not None
 
-            # VAD check on buffered audio
-            raw_bytes = vad_buf.getvalue()
-            is_speaking = self._has_voice(raw_bytes)
+            if was_speaking:
+                # If we have already detected speech, we keep appending to the speech buffer regardless of VAD.
+                speech_buf.write(audio_np)
+            elif is_speaking:
+                # If we haven't detected speech yet and VAD is triggered, push the raw buffer contents to the speech buffer
+                # and clear the raw buffer.
+                speech_buf.write(raw_buf.get_contents_slice())
+                state.first_spoke = state.last_noise
 
             if is_speaking:
-                # clear raw buffer when speech starts
-                vad_buf.seek(0)
-                vad_buf.truncate(0)
-
-            if speech_buf.tell() > 0:
-                # Always append the new clip to the speech buffer if it has data because it implies that
-                # we detected speech previously and are still in the same speaking session.
-                speech_buf.write(audio16)
-                if is_speaking:
-                    state.last_spoke = datetime.datetime.now(datetime.timezone.utc)
-            elif is_speaking:
-                # First time speech detected, write pre-buffered audio to speech buffer.
-                speech_buf.write(raw_bytes)
-                state.last_spoke = datetime.datetime.now(datetime.timezone.utc)
-                state.first_spoke = state.last_spoke
+                raw_buf.pos = 0
+                state.last_spoke = state.last_noise
+            else:
+                # No speech detected. Keep the contents of the raw buffer for future VAD checks.
+                # But if the buffer is too large, we need to shift it, discarding the oldest data.
+                raw_buf.shift(raw_buf.pos - RAW_BUFFER_MAX_LENGTH)
 
     async def _get_user_name(self, user_id: int) -> str:
         """Get the username for a given user ID, caching it if necessary."""
@@ -165,24 +175,26 @@ class VoiceCaptureSink(discord.sinks.Sink):
                 for user_id, state in list(self.user_states.items()):
                     with state.lock:
                         now = datetime.datetime.now(datetime.timezone.utc)
-                        speech_size = state.speech_buf.tell()
+                        speech_size = state.speech_buf.pos
                         if speech_size > 0 and state.last_spoke:
                             detected_silence = (now - state.last_spoke).total_seconds() > SILENCE_THRESHOLD_SECONDS
-                            is_max_size = MAX_SPEECH_BUF_BYTES and speech_size > MAX_SPEECH_BUF_BYTES
-                            if detected_silence or is_max_size:
-                                raw_audio: bytes = state.speech_buf.getvalue()
+                            buf_seconds = speech_size / TARGET_SR
+                            is_max_buf = MAX_SPEECH_BUF_SECONDS and buf_seconds > MAX_SPEECH_BUF_SECONDS
+                            if detected_silence or is_max_buf:
+                                audio_np: bytes = state.speech_buf.get_contents_slice().copy()
                                 user_name = await self._get_user_name(user_id)
-                                metadata = VoiceMetadata(
-                                    user_id=user_id,
-                                    user_name=user_name,
-                                    channel_id=channel_id,
-                                    capture_time=state.first_spoke,
-                                )
-                                await self.capture_queue.put((metadata, raw_audio))
+                                # Filter samples that are too quiet.
+                                if has_sound(audio_np, threshold=0.05, total_sound_ms=500):
+                                    metadata = VoiceMetadata(
+                                        user_id=user_id,
+                                        user_name=user_name,
+                                        channel_id=channel_id,
+                                        capture_time=state.first_spoke,
+                                    )
+                                    await self.capture_queue.put((metadata, audio_np))
                                 state.last_spoke = None
                                 state.first_spoke = None
-                                state.speech_buf.seek(0)
-                                state.speech_buf.truncate(0)
+                                state.speech_buf.pos = 0
                         if state.last_noise and (now - state.last_noise).total_seconds() > PRUNE_THRESHOLD_SECONDS:
                             self.user_states.pop(user_id, None)
                 await asyncio.sleep(0.1)

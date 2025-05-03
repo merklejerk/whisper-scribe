@@ -24,7 +24,7 @@ MetadataT = TypeVar('MetadataT')
 # Define types used in the class, now using MetadataT
 AudioPipelineOutput = Dict[str, Any]
 # Job now takes MetadataT and audio bytes
-AudioProcessingJob: TypeAlias = Tuple[MetadataT, bytes]
+AudioProcessingJob: TypeAlias = Tuple[MetadataT, np.ndarray]
 # Result now returns MetadataT and transcription string
 TranscriptionResult: TypeAlias = Tuple[MetadataT, str]
 
@@ -140,15 +140,12 @@ class Transcriber(Generic[MetadataT]):
         self,
         item: AudioProcessingJob[MetadataT],
     ):
-        metadata, audio_data = item
-        if not audio_data:
+        metadata, audio_np = item
+        if len(audio_np) == 0:
             return
 
-        # audio_data is 16kHz mono PCM int16 bytes
         np_type = np.float32 if self._torch_dtype == torch.float32 else np.float16
-        audio_np: np.ndarray = np.frombuffer(audio_data, dtype=np.int16)
-        # normalize to [-1,1]
-        audio_np: np.ndarray = audio_np.astype(np_type) / 32768
+        audio_np: np.ndarray = audio_np.astype(np_type)
 
         debug_play_audio(audio_np, TARGET_SR)
 
@@ -167,7 +164,6 @@ class Transcriber(Generic[MetadataT]):
             kwargs["language"] = "english"
             kwargs["task"] = "transcribe"
 
-        # TODO: Pass in attention mask.
         result: AudioPipelineOutput = self._pipe(
             inputs=audio_np,
             generate_kwargs=kwargs,

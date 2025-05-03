@@ -22,9 +22,9 @@ prompt = "Dungeons and Dragons, spell, roll, saving throw, initiative, owlbear, 
 # Seconds of silence before ending a segment
 silence_threshold_seconds = 1.25
 # Voice Activity Detection (VAD) threshold for Silero VAD (0.0-1.0, higher = more strict)
-vad_threshold = 0.66
-# Maximum allowed speech buffer size in bytes before forced processing (0 = disabled)
-max_speech_buf_bytes = 2097152  # 2MB default, adjust as needed
+vad_threshold = 0.75
+# Maximum allowed speech buffer length in seconds before forced into processing (0 = disabled)
+max_speech_buf_seconds = 60
 
 # Configuration for generating outlines.
 [wrapup]

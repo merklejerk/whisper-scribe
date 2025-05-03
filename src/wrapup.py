@@ -99,11 +99,12 @@ def _remap_phrases(text: str, phrase_map: dict) -> str:
         text = pattern.sub(lambda m: v[0].upper() + v[1:] if m.group(0)[0].isupper() else v, text)
     return text
 
-async def create_wrapup_from_log_entries(entries: List[LogEntry], name: str) -> WrapupFiles:
+async def create_wrapup_from_log_entries(entries: List[LogEntry], name: str, outline: bool = True) -> WrapupFiles:
     """
-    Given a list of log entries, sorts by timestamp, writes a chatlog, and sends to OpenAI for processing.
+    Given a list of log entries, sorts by timestamp, writes a chatlog, and (optionally) sends to OpenAI for processing.
     The 'name' parameter determines the filenames it writes to.
-    Returns the path to the generated summary markdown file.
+    If outline is False, only the chatlog is generated and no summary is created.
+    Returns the paths to the generated files.
     """
     entries.sort(key=lambda x: x.timestamp)
     chatlog_rows = [
@@ -111,5 +112,7 @@ async def create_wrapup_from_log_entries(entries: List[LogEntry], name: str) -> 
         for e in entries
     ]
     chatlog_path = await _write_chatlog(chatlog_rows, name)
-    md_path = await _create_summary(chatlog_rows, name)
+    md_path = None
+    if outline:
+        md_path = await _create_summary(chatlog_rows, name)
     return WrapupFiles(outline_path=md_path, chatlog_path=chatlog_path)
