@@ -11,7 +11,7 @@ allowed_commanders = []
 # Model name for speech-to-text
 model = "openai/whisper-small.en"
 # Log probability threshold for Whisper transcription (lower = more speculative)
-logprob_threshold = -1.25
+logprob_threshold = -1.0
 # No speech threshold for Whisper (0.0-1.0, lower = more strict about detecting speech)
 no_speech_threshold = 0.1
 # Initial prompt for Whisper to condition the transcription. You can add a few proper nouns here as hints.
