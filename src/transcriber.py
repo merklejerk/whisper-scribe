@@ -4,6 +4,7 @@ import threading
 import torch
 import numpy as np
 from typing import Optional, Dict, Any, Tuple, TypeAlias, Generic, TypeVar
+import os
 from transformers import (
     Pipeline as WhisperPipeline,
     pipeline,
@@ -12,13 +13,11 @@ from transformers import (
     WhisperTokenizerFast,
     WhisperFeatureExtractor,
 )
-from .debug_utils import debug_play_audio
+from .debug_utils import save_norm_audio
 from .config import WHISPER_LOGPROB_THRESHOLD, WHISPER_NO_SPEECH_THRESHOLD, WHISPER_PROMPT
-from .waveform_utils import bandpass_filter, pre_emphasis, rms_normalize
 
 # Module-level audio constants
 TARGET_SR = 16000  # expected incoming sample rate
-SILENCE_TOP_DB = 60  # threshold for trimming silence
 
 MetadataT = TypeVar('MetadataT')
 
@@ -145,14 +144,10 @@ class Transcriber(Generic[MetadataT]):
         if len(audio_np) == 0:
             return
 
-        # debug_play_audio(audio_np, TARGET_SR)
-        # Perform pre-processing on the audio data
-        audio_np = rms_normalize(bandpass_filter(
-            pre_emphasis(audio_np, 0.75),
-            TARGET_SR,
-            order=5,
-        )).clip(-1.0, 1.0)
-        # debug_play_audio(audio_np, TARGET_SR)
+        # Audio should be mono, normalized, 16kHz
+        if os.environ.get("SAVE_AUDIO", "0") == "1":
+            save_norm_audio(audio_np, "debug.wav", TARGET_SR)
+
         # Convert to the correct dtype for Whisper
         np_type = np.float32 if self._torch_dtype == torch.float32 else np.float16
         audio_np: np.ndarray = audio_np.astype(np_type)

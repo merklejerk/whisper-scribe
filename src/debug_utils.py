@@ -2,6 +2,7 @@ import os
 import numpy as np
 import sounddevice as sd
 from scipy.signal import resample_poly
+import soundfile as sf
 
 DEBUG = os.getenv('DEBUG', '0') == '1'
 if os.getenv('DEBUG'):
@@ -63,3 +64,18 @@ def debug_play_audio(audio_np: np.ndarray, input_sr: int):
         # Play on the selected device
         sd.play(audio_resampled, samplerate=output_sr, device=target_device_index)
         sd.wait()
+
+def save_norm_audio(
+    audio: np.ndarray,
+    file_path: str,
+    sample_rate: int = 16000,
+) -> None:
+    """Normalizes and saves audio as a mono WAV file (float32, -1.0 to 1.0) at the given sample rate."""
+    # Ensure audio is float32
+    audio = audio.astype(np.float32)
+    # Normalize to -1.0 to 1.0 if not already
+    max_val = np.max(np.abs(audio))
+    if max_val > 0:
+        audio = audio / max_val
+    # Save as mono WAV
+    sf.write(file_path, audio, sample_rate, subtype='PCM_16')

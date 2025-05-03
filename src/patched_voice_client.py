@@ -60,7 +60,7 @@ class PatchedVoiceClient(discord.VoiceClient):
     
     async def _restart_recording(self, recv_thread: threading.Thread):
         """ Restart the recording thread. """
-        async with self._recording_state_lock.acquire():
+        async with self._recording_state_lock:
             if self.recording:
                 print("Restarting recording thread...")
                 sink = self.sink
