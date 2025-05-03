@@ -67,7 +67,7 @@ class AudioBuffer(object):
     def expand(self, n: int) -> None:
         """Expand the size of the buffer."""
         if n > 0:
-            self.array.resize((len(self.array) + n,))
+            self.array.resize((len(self.array) + n,), refcheck=False)
     
     def shift(self, n: int) -> int:
         """Shift the buffer contents to the left by n items."""
@@ -181,17 +181,17 @@ class VoiceCaptureSink(discord.sinks.Sink):
                             buf_seconds = speech_size / TARGET_SR
                             is_max_buf = MAX_SPEECH_BUF_SECONDS and buf_seconds > MAX_SPEECH_BUF_SECONDS
                             if detected_silence or is_max_buf:
-                                audio_np: bytes = state.speech_buf.get_contents_slice().copy()
-                                user_name = await self._get_user_name(user_id)
                                 # Filter samples that are too quiet.
+                                audio_np = state.speech_buf.get_contents_slice()
                                 if has_sound(audio_np, threshold=0.05, total_sound_ms=500):
+                                    user_name = await self._get_user_name(user_id)
                                     metadata = VoiceMetadata(
                                         user_id=user_id,
                                         user_name=user_name,
                                         channel_id=channel_id,
                                         capture_time=state.first_spoke,
                                     )
-                                    await self.capture_queue.put((metadata, audio_np))
+                                    await self.capture_queue.put((metadata, audio_np.copy()))
                                 state.last_spoke = None
                                 state.first_spoke = None
                                 state.speech_buf.pos = 0

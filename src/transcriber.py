@@ -14,6 +14,7 @@ from transformers import (
 )
 from .debug_utils import debug_play_audio
 from .config import WHISPER_LOGPROB_THRESHOLD, WHISPER_NO_SPEECH_THRESHOLD, WHISPER_PROMPT
+from .waveform_utils import bandpass_filter, pre_emphasis, rms_normalize
 
 # Module-level audio constants
 TARGET_SR = 16000  # expected incoming sample rate
@@ -144,10 +145,18 @@ class Transcriber(Generic[MetadataT]):
         if len(audio_np) == 0:
             return
 
+        debug_play_audio(audio_np, TARGET_SR)
+        # Perform pre-processing on the audio data
+        audio_np = rms_normalize(bandpass_filter(
+            pre_emphasis(audio_np, 0.85),
+            TARGET_SR,
+            order=4,
+        )).clip(-1.0, 1.0)
+        debug_play_audio(audio_np, TARGET_SR)
+        # Convert to the correct dtype for Whisper
         np_type = np.float32 if self._torch_dtype == torch.float32 else np.float16
         audio_np: np.ndarray = audio_np.astype(np_type)
 
-        debug_play_audio(audio_np, TARGET_SR)
 
         kwargs = {
             "temperature": (0., 0.1, 0.25, 0.5),

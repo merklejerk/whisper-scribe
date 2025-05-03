@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.signal import resample_poly
+from scipy.signal import resample_poly, butter, lfilter
 
 def has_sound(
     waveform: np.ndarray,
@@ -33,3 +33,26 @@ def pcm16_to_norm_waveform(audio: bytes, source_sr: int, target_sr: int) -> np.n
     else:
         resampled = mono
     return np.clip(resampled, -32768, 32767).astype(np.float32) / 32768.0
+
+def bandpass_filter(
+    signal: np.ndarray,
+    sr: int,
+    lowcut: float = 300.0,
+    highcut: float = 3400.0,
+    order: int = 6
+) -> np.ndarray:
+    nyq = 0.5 * sr
+    low = lowcut / nyq
+    high = highcut / nyq
+    b, a = butter(order, [low, high], btype="band")
+    return lfilter(b, a, signal)
+
+def pre_emphasis(signal: np.ndarray, coeff: float = 0.97):
+    return np.append(signal[0], signal[1:] - coeff * signal[:-1])
+
+def rms_normalize(signal: np.ndarray, target_db: float = -20.0):
+    rms = np.sqrt(np.mean(signal**2))
+    if rms == 0:
+        return signal  # silent
+    target_rms = 10 ** (target_db / 20.0)
+    return signal * (target_rms / rms)

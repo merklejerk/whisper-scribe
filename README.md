@@ -49,6 +49,8 @@ poetry run python -m src.cli VOICE_CHANNEL_ID SESSION_NAME
 - At any time you can say `!wrapup` in the voice channel's text channel to have the bot produce wrapup files (transcript + session summary), which get posted to chat and also saved to `wrapup/`.
 - You can also say `!log` to just generate the transcript.
 
+Unless everyone in your group has a AAA podcasting setup in a perfect environment, transcripts will probably be riddled with artifacts and misheard words. Adding your most commonly used proper nouns to the `whisper.prompt` config can help. However, I do find that modern retail LLMs are actually pretty good at teasing out a remarkably cohesive narrative from low quality transcripts, so you can probably still get a useful wrapup summary.
+
 ## How It Works
 
 - `py-cord` provides Discord API and voice channel access for real-time audio capture and bot stuff.
