@@ -2,8 +2,7 @@
 
 <img src="static/banner.svg" width="300px" alt="whisper scribe banner" style="display: block; margin: 2em auto">
 
-
-*WhisperScribe* is a self-hosted Discord bot for live, multi-user voice transcription and automated session summarization, designed for tabletop RPGs. It leverages advanced speech-to-text models (Whisper via PyTorch and Transformers) to transcribe Discord voice channels locally, using voice activity detection (Silero) for accurate speech segmentation. Transcripts are logged in structured NDJSON files, and users can generate comprehensive session wrap-ups, including full transcripts and AI-powered summaries (requires cloud OpenAI key), on demand via a chat command.
+*WhisperScribe* is a self-hosted Discord bot for live, multi-user voice transcription and automated session summarization, designed for tabletop RPGs. It leverages local speech-to-text transformer models (Whisper) to transcribe Discord voice and text channels as you play. In chat, users can command the bot to post session logs and an AI-generated session summary (requires OpenAI key).
 
 ## Requirements
 
@@ -60,5 +59,5 @@ poetry run python -m src.cli VOICE_CHANNEL_ID SESSION_NAME
 
 ## TODO
 
-- Use a small local LLM (Gemma 1B or 4B?) to clean up transcription artifacts and mistakes.
+- Use a small local LLM (Gemma 1B or 4B?) to clean up transcription artifacts and mistakes at regular intervals.
 - Docker container.
