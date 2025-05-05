@@ -165,6 +165,7 @@ class VoiceCaptureSink(discord.sinks.Sink):
                 # the VAD point onwards into the speech buffer.
                 speech_buf.write(raw_buf.get_content_slice()[int(voice_time * BUF_SR):])
                 state.first_spoke = state.last_noise
+                print(f"Detected speech for user {user_id} at {state.first_spoke.isoformat()}")
 
             if is_speaking:
                 raw_buf.pos = 0
@@ -221,6 +222,7 @@ class VoiceCaptureSink(discord.sinks.Sink):
             state.speech_buf.pos = 0
             
             if not has_sound(speech, threshold=0.05, total_sound_ms=500):
+                print(f"Speech for user {user_id} is below threshold, skipping.")
                 return
             speech = speech.copy()
         
@@ -230,6 +232,7 @@ class VoiceCaptureSink(discord.sinks.Sink):
             channel_id=self.voice_client.channel.id,
             capture_time=capture_time,
         )
+        print(f"Submitting audio for user {metadata.user_name} ({len(speech) / BUF_SR:.2f}s) to transcriber.")
         await self.capture_queue.put((
             metadata,
             resample(enhance_speech(speech, BUF_SR), BUF_SR, TARGET_SR),
@@ -255,7 +258,7 @@ class VoiceCaptureSink(discord.sinks.Sink):
     
     async def start(self, vc: discord.VoiceClient):
         """Starts the background process task."""
-        # Then start the silence detection loop
+        # Start the silence detection loop
         if self._process_task is None:
             self._process_task = asyncio.create_task(self._process_loop())
         self.voice_client = vc
