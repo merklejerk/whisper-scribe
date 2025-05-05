@@ -6,6 +6,7 @@ from typing import Optional, Any
 import asyncio
 import re
 import os # Added import
+import traceback
 
 import src.config as config
 from .wrapup import create_wrapup_from_log_entries, WrapupFiles # Added WrapupFiles import
@@ -18,7 +19,8 @@ def get_session_log_path(session_name: str) -> str:
     """Returns the path to the session log file."""
     return f"logs/{session_name}.ndjson"
 
-MAX_JOIN_TIMEOUT = 10.0  # seconds
+MAX_JOIN_TIMEOUT_SECONDS = 10.0
+RETRY_CONNECTION_SECONDS = 5.0
 
 class DiscordBot(object):
     session_name: str
@@ -74,8 +76,14 @@ class DiscordBot(object):
         self._client.add_check(self._command_check)
         
     async def start(self, api_key: str, *, on_ready: Optional[callable] = None):
-        self._transcription_consumer_task = asyncio.create_task(self._process_transcription_queue())
-        self._capture_consumer_task = asyncio.create_task(self._process_capture_queue())
+        self._transcription_consumer_task = asyncio.create_task(
+            self._process_transcription_queue(),
+            name="transcription_consumer_task"
+        )
+        self._capture_consumer_task = asyncio.create_task(
+            self._process_capture_queue(),
+            name="capture_consumer_task"
+        )
         if on_ready:
             async def wrapped_on_ready():
                 await on_ready(self)
@@ -109,24 +117,33 @@ class DiscordBot(object):
             self._transcriber.start()
             print(f"Attempting to join voice channel: {voice_channel.name}...")
             vc = self._vc = await voice_channel.connect(
-                reconnect=True,
+                # reconnect=True,
                 cls=PatchedVoiceClient,
-                timeout=MAX_JOIN_TIMEOUT,
+                timeout=MAX_JOIN_TIMEOUT_SECONDS,
             )
             print(f"Successfully joined voice channel: {vc.channel.name} (ID: {self.voice_channel_id})")
 
             await self._sink.start(vc)
-            vc.start_recording(self._sink, self._finished_callback, vc.channel)
+
+            inst = self
+            async def _finished_callback(_: VoiceCaptureSink, channel: discord.VoiceChannel) -> None:
+                """Called by py-cord when recording stops."""
+                print(f"Warning: Recording stopped unexpectedly in channel {channel.name} (ID: {channel.id})!")
+                while True:
+                    try:
+                        await inst._connect_and_start_recording(channel)
+                        break
+                    except Exception as e:
+                        traceback.print_exc()
+                        print(f"Trying again in {RETRY_CONNECTION_SECONDS} seconds...")
+                        await asyncio.sleep(RETRY_CONNECTION_SECONDS)
+            
+            vc.start_recording(self._sink, _finished_callback, vc.channel)
         except:
             if self._vc and self._vc.is_connected():
                 await self._vc.disconnect(force=True)
             self._vc = None
             raise
-
-    async def _finished_callback(self, _: VoiceCaptureSink, channel: discord.VoiceChannel) -> None:
-        """Called by py-cord when recording stops."""
-        print(f"Warning: Recording stopped unexpectedly in channel {channel.name} (ID: {channel.id})!")
-        await self._connect_and_start_recording(channel)
 
     # Called when the bot successfully connects and is ready.
     async def _on_ready(self) -> None:

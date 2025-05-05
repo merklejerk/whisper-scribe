@@ -1,21 +1,17 @@
 import discord
 import nacl
 import traceback
-import asyncio
-import threading
-import errno
+
+import nacl.exceptions
 
 class PatchedVoiceClient(discord.VoiceClient):
     """A subclass of discord.VoiceClient to mitigate instability in py-cord's 2.6.1 `VoiceClient` impl."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        fuse = kwargs.get("fuse", 5.0)
-        # asyncio.run
-        # self.loop.call_later(5.0, self.disconnect
 
     def unpack_audio(self, data):
-        """ Overrident because this fails regularly with IndexError and CryptoError. """
+        """ Overriden because this fails regularly with IndexError and CryptoError. """
         if len(data) == 0:
             return
         try:

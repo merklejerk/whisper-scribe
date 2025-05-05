@@ -260,7 +260,7 @@ class VoiceCaptureSink(discord.sinks.Sink):
         """Starts the background process task."""
         # Start the silence detection loop
         if self._process_task is None:
-            self._process_task = asyncio.create_task(self._process_loop())
+            self._process_task = asyncio.create_task(self._process_loop(), name="voice sink process loop")
         self.voice_client = vc
         self._loop = asyncio.get_event_loop()
         print("VoiceCaptureSink started.")
