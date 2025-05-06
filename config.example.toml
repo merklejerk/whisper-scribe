@@ -38,3 +38,10 @@ tips = []
 
 # Mapping of phrases to remap in the chat log.
 [wrapup.phrase_map]
+
+# Configuration for the transcript refiner using Ollama
+[refiner]
+# The name of the Ollama model to use for refining transcripts (e.g., "llama3", "mistral")
+model = "llama3"
+# The number of previous log entries to provide as context to the refiner model
+context_log_lines = 10

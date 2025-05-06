@@ -2,18 +2,20 @@ import discord
 from discord.ext.commands import Bot,Command
 import asyncio
 import datetime
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict # Added List, Dict
 import asyncio
 import re
 import os # Added import
 import traceback
+from collections import deque # Added deque
 
 import src.config as config
 from .wrapup import create_wrapup_from_log_entries, WrapupFiles # Added WrapupFiles import
-from .logging import add_entry as add_log_entry, load_log
+from .logging import add_entry as add_log_entry, load_log, LogEntry # Added LogEntry
 from .transcriber import Transcriber
 from .voice_capture_sink import VoiceCaptureSink, VoiceMetadata
 from .patched_voice_client import PatchedVoiceClient
+from .refiner import TranscriptRefiner # Added TranscriptRefiner import
 
 def get_session_log_path(session_name: str) -> str:
     """Returns the path to the session log file."""
@@ -31,8 +33,10 @@ class DiscordBot(object):
     _transcription_queue: asyncio.Queue
     _capture_queue: asyncio.Queue
     _transcriber: Transcriber[VoiceMetadata]
+    _refiner: TranscriptRefiner # Added refiner instance
     _transcription_consumer_task: Optional[asyncio.Task]
     _capture_consumer_task: Optional[asyncio.Task]
+    _recent_log_entries: deque[LogEntry] # Added deque for recent logs
 
     def __init__(
             self,
@@ -61,10 +65,13 @@ class DiscordBot(object):
             model_name=config.WHISPER_MODEL,
             device=device
         )
+        self._refiner = TranscriptRefiner() # Instantiate the refiner
         # Task for consuming transcriptions
         self._transcription_consumer_task = None
         # Task for consuming capture queue and submitting jobs
         self._capture_consumer_task = None
+        # Initialize recent log entries buffer
+        self._recent_log_entries = deque(maxlen=config.REFINER_CONTEXT_LOG_LINES)
 
         # Regiser commands.
         self._client.add_command(Command(self._wrapup_command, name='wrapup'))
@@ -172,18 +179,25 @@ class DiscordBot(object):
         )
 
     async def _process_transcription_queue(self):
-        """Consumes transcription results from the queue and logs them."""
+        """Consumes transcription results, refines them, and logs them."""
         print("Transcription consumer task started.")
         while True:
             metadata, transcription = await self._transcription_queue.get()
             try:
                 if re.search(r"[a-z0-9]+", transcription):
+                    # Get context from recent logs
+                    context_log = list(self._recent_log_entries)
+                    # Refine the transcription
+                    refined_transcription = await self._refiner.refine(transcription, context_log)
+                    self._recent_log_entries.append(refined_transcription)
+
+                    # Log the refined transcription
                     await self._add_log_entry(
                         medium="voice",
                         user_id=metadata.user_id,
                         user_name=metadata.user_name,
                         timestamp=metadata.capture_time,
-                        content=transcription,
+                        content=refined_transcription,
                     )
             finally:
                 self._transcription_queue.task_done()

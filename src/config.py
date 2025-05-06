@@ -48,6 +48,12 @@ PHRASE_MAP: Final[Optional[list[str]]] = bot_config.get("wrapup.phrase_map", {})
 # Username remapping for chatlog
 USERNAME_MAP: Final[dict[str, str]] = bot_config.get("wrapup.username_map", {})
 
+# Refiner Configuration
+# Default to None if not specified in config
+REFINER_OLLAMA_MODEL: Final[Optional[str]] = bot_config.get("refiner", {}).get("model") 
+REFINER_CONTEXT_LOG_LINES: Final[int] = bot_config.get("refiner", {}).get("context_log_lines", 10)
+
+
 # Validation
 def validate_config() -> bool:
     """Checks if essential configuration variables are set."""

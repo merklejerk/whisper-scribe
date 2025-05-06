@@ -1725,6 +1725,22 @@ files = [
 ]
 
 [[package]]
+name = "ollama"
+version = "0.4.8"
+description = "The official Python client for Ollama."
+optional = false
+python-versions = "<4.0,>=3.8"
+groups = ["main"]
+files = [
+    {file = "ollama-0.4.8-py3-none-any.whl", hash = "sha256:04312af2c5e72449aaebac4a2776f52ef010877c554103419d3f36066fe8af4c"},
+    {file = "ollama-0.4.8.tar.gz", hash = "sha256:1121439d49b96fa8339842965d0616eba5deb9f8c790786cdf4c0b3df4833802"},
+]
+
+[package.dependencies]
+httpx = ">=0.27,<0.29"
+pydantic = ">=2.9.0,<3.0.0"
+
+[[package]]
 name = "onnxruntime"
 version = "1.21.1"
 description = "ONNX Runtime is a runtime accelerator for Machine Learning models"
@@ -3559,4 +3575,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<4.0"
-content-hash = "60fb7fde276da7023a9af3035af3132c372fa655a208c46bb0ff59484e3c90d8"
+content-hash = "442f59ca41ad15d88d15a08ab4edc8af6cd25a2f9d3170e67691cdd6d31e6ce2"
