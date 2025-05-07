@@ -81,24 +81,6 @@ async def _create_summary(chatlog_rows: List[str], name: str) -> Optional[str]:
         await mdfile.write(outline)
     return md_path
 
-def _remap_phrases(text: str, phrase_map: dict) -> str:
-    import re
-    def replace_match(match):
-        matched = match.group(0)
-        key = match.re.pattern[4:-4]  # extract the key from the regex pattern
-        replacement = phrase_map[key]
-        # Preserve capitalization of the first character
-        if matched and matched[0].isupper():
-            return replacement[0].upper() + replacement[1:]
-        else:
-            return replacement
-    # For each phrase, do a case-insensitive replacement
-    for k, v in phrase_map.items():
-        # Use word boundaries if you want to only match whole words, otherwise just re.sub
-        pattern = re.compile(r'(?i)'+re.escape(k))
-        text = pattern.sub(lambda m: v[0].upper() + v[1:] if m.group(0)[0].isupper() else v, text)
-    return text
-
 async def create_wrapup_from_log_entries(entries: List[LogEntry], name: str, outline: bool = True) -> WrapupFiles:
     """
     Given a list of log entries, sorts by timestamp, writes a chatlog, and (optionally) sends to OpenAI for processing.
@@ -108,7 +90,7 @@ async def create_wrapup_from_log_entries(entries: List[LogEntry], name: str, out
     """
     entries.sort(key=lambda x: x.timestamp)
     chatlog_rows = [
-        f"{config.USERNAME_MAP.get(e.user_name, e.user_name)}: {_remap_phrases(e.content, config.PHRASE_MAP)}"
+        f"{config.USERNAME_MAP.get(e.user_name, e.user_name)}: {e.content}"
         for e in entries
     ]
     chatlog_path = await _write_chatlog(chatlog_rows, name)

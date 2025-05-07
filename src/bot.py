@@ -2,20 +2,20 @@ import discord
 from discord.ext.commands import Bot,Command
 import asyncio
 import datetime
-from typing import Optional, Any, List, Dict # Added List, Dict
+from typing import Optional, Any
 import asyncio
 import re
-import os # Added import
+import os
 import traceback
-from collections import deque # Added deque
+from collections import deque
 
 import src.config as config
-from .wrapup import create_wrapup_from_log_entries, WrapupFiles # Added WrapupFiles import
-from .logging import add_entry as add_log_entry, load_log, LogEntry # Added LogEntry
+from .wrapup import create_wrapup_from_log_entries
+from .logging import write_log_entry, load_log, LogEntry
 from .transcriber import Transcriber
 from .voice_capture_sink import VoiceCaptureSink, VoiceMetadata
 from .patched_voice_client import PatchedVoiceClient
-from .refiner import TranscriptRefiner # Added TranscriptRefiner import
+from .refiner import TranscriptRefiner
 
 def get_session_log_path(session_name: str) -> str:
     """Returns the path to the session log file."""
@@ -33,10 +33,10 @@ class DiscordBot(object):
     _transcription_queue: asyncio.Queue
     _capture_queue: asyncio.Queue
     _transcriber: Transcriber[VoiceMetadata]
-    _refiner: TranscriptRefiner # Added refiner instance
+    _refiner: TranscriptRefiner
     _transcription_consumer_task: Optional[asyncio.Task]
     _capture_consumer_task: Optional[asyncio.Task]
-    _recent_log_entries: deque[LogEntry] # Added deque for recent logs
+    _recent_log_entries: deque[LogEntry]
 
     def __init__(
             self,
@@ -65,7 +65,7 @@ class DiscordBot(object):
             model_name=config.WHISPER_MODEL,
             device=device
         )
-        self._refiner = TranscriptRefiner() # Instantiate the refiner
+        self._refiner = TranscriptRefiner()
         # Task for consuming transcriptions
         self._transcription_consumer_task = None
         # Task for consuming capture queue and submitting jobs
@@ -82,7 +82,18 @@ class DiscordBot(object):
         # Add the global check
         self._client.add_check(self._command_check)
         
+    async def bootstrap_recent_log_entries(self):
+        """Load the last N log entries from the session log file into _recent_log_entries."""
+        log_path = get_session_log_path(self.session_name)
+        entries = await load_log(log_path, allow_missing=True)
+        # Only keep the last N entries
+        for entry in entries[-config.REFINER_CONTEXT_LOG_LINES:]:
+            self._recent_log_entries.append(entry)
+        if len(self._recent_log_entries) != 0:
+            print(f"Bootstrapped _recent_log_entries with {len(self._recent_log_entries)} entries from log.")
+
     async def start(self, api_key: str, *, on_ready: Optional[callable] = None):
+        await self.bootstrap_recent_log_entries()
         self._transcription_consumer_task = asyncio.create_task(
             self._process_transcription_queue(),
             name="transcription_consumer_task"
@@ -107,13 +118,17 @@ class DiscordBot(object):
                 return False
         return True
 
-    async def _connect_and_start_recording(self, voice_channel: discord.VoiceChannel):
+    async def _connect_and_start_recording(self, channel_id: int):
         """Connects to the voice channel, creates sink, and starts recording.
 
         Returns True on success, False on failure.
         Handles updating self._vc and self._sink.
         """
         # Disconnect any existing voice client.
+        channel = await self._client.fetch_channel(channel_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            raise ValueError(f"Error: Channel ID {channel_id} is not a voice channel or not found.")
+
         if self._vc:
             if self._vc.is_connected():
                 await self._vc.disconnect(force=True)
@@ -122,13 +137,13 @@ class DiscordBot(object):
 
         try:
             self._transcriber.start()
-            print(f"Attempting to join voice channel: {voice_channel.name}...")
-            vc = self._vc = await voice_channel.connect(
+            print(f"Attempting to join voice channel: {channel.name}...")
+            vc = self._vc = await channel.connect(
                 # reconnect=True,
                 cls=PatchedVoiceClient,
                 timeout=MAX_JOIN_TIMEOUT_SECONDS,
             )
-            print(f"Successfully joined voice channel: {vc.channel.name} (ID: {self.voice_channel_id})")
+            print(f"Successfully joined voice channel: {channel.name} (ID: {channel.id})")
 
             await self._sink.start(vc)
 
@@ -136,14 +151,18 @@ class DiscordBot(object):
             async def _finished_callback(_: VoiceCaptureSink, channel: discord.VoiceChannel) -> None:
                 """Called by py-cord when recording stops."""
                 print(f"Warning: Recording stopped unexpectedly in channel {channel.name} (ID: {channel.id})!")
-                while True:
+                num_retries = 8
+                for attempt in range(num_retries):
                     try:
-                        await inst._connect_and_start_recording(channel)
+                        await inst._connect_and_start_recording(channel.id)
                         break
                     except Exception as e:
                         traceback.print_exc()
-                        print(f"Trying again in {RETRY_CONNECTION_SECONDS} seconds...")
-                        await asyncio.sleep(RETRY_CONNECTION_SECONDS)
+                        if attempt < num_retries - 1:
+                            print(f"Trying again in {RETRY_CONNECTION_SECONDS} seconds ({attempt + 2}/{num_retries})...")
+                            await asyncio.sleep(RETRY_CONNECTION_SECONDS)
+                        else:
+                            raise e
             
             vc.start_recording(self._sink, _finished_callback, vc.channel)
         except:
@@ -159,46 +178,44 @@ class DiscordBot(object):
         # Automatically connect to the specified voice channel.
         await self.join_channel(self.voice_channel_id)
 
-    async def _add_log_entry(
-            self,
-            *,
-            medium: str,
-            user_id: int,
-            user_name: str,
-            content: str,
-            timestamp: datetime.datetime,
-        ) -> None:
-        print(f"> {user_name if user_name else user_id}: {content}")
-        await add_log_entry(
+    async def write_log_entry(self, entry: LogEntry):
+        print(f"> {entry.user_name}: {entry.content}")
+        await write_log_entry(
             log_path=get_session_log_path(self.session_name),
-            content=content,
-            medium=medium,
-            user_id=user_id,
-            user_name=user_name,
-            timestamp=timestamp,
+            entry=entry,
         )
 
     async def _process_transcription_queue(self):
         """Consumes transcription results, refines them, and logs them."""
         print("Transcription consumer task started.")
         while True:
-            metadata, transcription = await self._transcription_queue.get()
+            metadata, content = await self._transcription_queue.get()
             try:
-                if re.search(r"[a-z0-9]+", transcription):
-                    # Get context from recent logs
-                    context_log = list(self._recent_log_entries)
-                    # Refine the transcription
-                    refined_transcription = await self._refiner.refine(transcription, context_log)
-                    self._recent_log_entries.append(refined_transcription)
+                if not re.search(r"[a-z0-9]+", content):
+                    continue
+                # Refine the transcription
+                context_log = list(self._recent_log_entries)
+                entry = LogEntry(
+                    user_id=metadata.user_id,
+                    user_name=metadata.user_name,
+                    timestamp=metadata.capture_time,
+                    content=content,
+                    medium="voice",
+                )
+                refined_content = await self._refiner.refine(entry, context_log)
+                if not refined_content:
+                    print(f"Rejected transcript for {entry.user_name}:\n\t\"{entry.content}\"")
+                    continue
+                if refined_content != content:
+                    print(f"Refined transcript for {entry.user_name}:\n\t--- \"{entry.content}\"\n\t+++ \"{refined_content}\"")
+                entry.content = refined_content
+                self._recent_log_entries.append(entry)
 
-                    # Log the refined transcription
-                    await self._add_log_entry(
-                        medium="voice",
-                        user_id=metadata.user_id,
-                        user_name=metadata.user_name,
-                        timestamp=metadata.capture_time,
-                        content=refined_transcription,
-                    )
+                # Log the refined transcription
+                await self.write_log_entry(entry)
+            except Exception as e:
+                print(f"Error processing transcription: {e}")
+                traceback.print_exc()
             finally:
                 self._transcription_queue.task_done()
 
@@ -225,12 +242,14 @@ class DiscordBot(object):
         # Only log messages in the text channel with the same ID as the last voice channel
         if message.channel.id == self.voice_channel_id:
             # Delegate formatting and logging
-            await self._add_log_entry(
-                medium="text",
-                user_id=message.author.id,
-                user_name=message.author.name,
-                content=message.content,
-                timestamp=datetime.datetime.now(datetime.timezone.utc)
+            await self.write_log_entry(
+                LogEntry(
+                    medium="text",
+                    user_id=message.author.id,
+                    user_name=message.author.name,
+                    content=message.content,
+                    timestamp=datetime.datetime.now(datetime.timezone.utc),
+                )
             )
 
     async def shutdown(self):
@@ -274,16 +293,10 @@ class DiscordBot(object):
 
         print("Shutdown complete.")
 
-    async def join_channel(self, channel_id: int) -> bool:
+    async def join_channel(self, channel_id: int):
         if self._client.is_closed():
             raise RuntimeError("Not started.")
-        
-        """Helper method to join a voice channel by its ID."""
-        channel = self._client.get_channel(channel_id)
-        if isinstance(channel, discord.VoiceChannel):
-            return await self._connect_and_start_recording(channel)
-        print(f"Error: Channel ID {channel_id} is not a voice channel or not found.")
-        return False
+        await self._connect_and_start_recording(channel_id)
 
     async def _wrapup_command(self, ctx: Any):
         """Process the current session log and generate a D&D 5e outline."""

@@ -2,6 +2,7 @@ import asyncio
 import queue
 import threading
 import torch
+import re
 import numpy as np
 from typing import Optional, Dict, Any, Tuple, TypeAlias, Generic, TypeVar
 import os
@@ -14,7 +15,7 @@ from transformers import (
     WhisperFeatureExtractor,
 )
 from .debug_utils import save_norm_audio
-from .config import WHISPER_LOGPROB_THRESHOLD, WHISPER_NO_SPEECH_THRESHOLD, WHISPER_PROMPT
+from .config import WHISPER_LOGPROB_THRESHOLD, WHISPER_NO_SPEECH_THRESHOLD, WHISPER_PROMPT, PHRASE_MAP
 
 # Module-level audio constants
 TARGET_SR = 16000  # expected incoming sample rate
@@ -174,7 +175,7 @@ class Transcriber(Generic[MetadataT]):
             batch_size=1,
             return_timestamps=False,
         )
-        transcription: str = result["text"].strip()
+        transcription: str = _remap_phrases(result["text"].strip(), PHRASE_MAP)
 
         if transcription:
             try:
@@ -188,3 +189,11 @@ class WhisperModelPatched(WhisperForConditionalGeneration):
     def forward(self, *args, **kwargs):
         kwargs.pop('input_ids', None)
         return super().forward(*args, **kwargs)
+
+def _remap_phrases(text: str, phrase_map: dict) -> str:
+    # For each phrase, do a case-insensitive replacement
+    for k, v in phrase_map.items():
+        # Use word boundaries if you want to only match whole words, otherwise just re.sub
+        pattern = re.compile(r'(?i)'+re.escape(k))
+        text = pattern.sub(lambda m: v[0].upper() + v[1:] if m.group(0)[0].isupper() else v, text)
+    return text
