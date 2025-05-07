@@ -57,9 +57,15 @@ Unless everyone in your group has a AAA podcasting setup in a perfect environmen
 - `silero-vad` for voice activity detection and for segmenting user speech.
 - `transformers` + Whisper for local speech-to-text transcription.
 - `openai` (GPT) for generating session summaries.
+- `ollama` for [refiner](#optional-transcript-refiner).
 - Lots of random ugly hacks to get all the libraries to work stabley together.
 
 ## TODO
 
-- Use a small local LLM (Gemma 1B or 4B?) to clean up transcription artifacts and mistakes at regular intervals.
 - Docker container.
+
+## Advanced Features
+
+### Optional: Transcript Refiner
+
+If you're encountering very many transcription errors, you can experiment with theoptional refiner pipeline, which uses a local LLM (via Ollama) to clean up and correct transcription artifacts in real To enable, spin up ollama locally, install the model of choice, and configure `[refiner.model]` in your `config.toml`. The model must support structured output. Note that this can be demanding on your system.
