@@ -201,6 +201,7 @@ class DiscordBot(object):
                     timestamp=metadata.capture_time,
                     content=content,
                     medium="voice",
+                    raw_content=content,
                 )
                 refined_content = await self._refiner.refine(entry, context_log)
                 if not refined_content:

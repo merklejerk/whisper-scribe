@@ -12,6 +12,7 @@ class LogEntry(BaseModel):
     timestamp: datetime
     content: str
     medium: Literal["text", "voice"] = "voice"
+    raw_content: str | None = None  # The pre-refined content, if available
 
 def ensure_log_directory_for_file(log_path: str) -> None:
     """Ensure the directory for the given log file exists."""
