@@ -243,6 +243,8 @@ class WhisperLogprobPipeline(AutomaticSpeechRecognitionPipeline):
         # Get the token IDs after the prompt.
         token_ids_list = [o["tokens"].sequences[0][f:] for o, f in zip(model_outputs, first_token_idxs)]
         # Get all the logprobs for all the token IDs in every chunk.
+        # Due to the way audio is chunked and overlapped (stride), this is easier to just evaluate
+        # in aggregate instead of by individual token.
         all_logprobs = np.array([
             torch.log_softmax(s[0], dim=-1)[tok_id].tolist() 
              for tok_ids, scores in zip(token_ids_list, (o["tokens"].scores for o in model_outputs))

@@ -62,10 +62,11 @@ Unless everyone in your group has a AAA podcasting setup in a perfect environmen
 
 ## TODO
 
+- Swap out refiner's ollama dependency for transformers.
 - Docker container.
 
 ## Advanced Features
 
 ### Optional: Transcript Refiner
 
-If you're encountering very many transcription errors, you can experiment with theoptional refiner pipeline, which uses a local LLM (via Ollama) to clean up and correct transcription artifacts in real To enable, spin up ollama locally, install the model of choice, and configure `[refiner.model]` in your `config.toml`. The model must support structured output. Note that this can be demanding on your system.
+If you're encountering very many transcription errors, you can experiment with theoptional refiner pipeline, which uses a local LLM (via Ollama) to clean up and correct transcription artifacts in real To enable, spin up ollama locally, install the model of choice, and configure `[refiner.model]` in your `config.toml`. The model must support structured output. Note that this can be demanding on your system and a bit finnicky.
