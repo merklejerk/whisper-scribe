@@ -5,6 +5,7 @@ import torch
 import re
 import numpy as np
 from typing import Optional, Dict, Any, Tuple, TypeAlias, Generic, TypeVar
+from dataclasses import dataclass
 import os
 from transformers import (
     Pipeline as WhisperPipeline,
@@ -27,9 +28,15 @@ MetadataT = TypeVar('MetadataT')
 AudioPipelineOutput = Dict[str, Any]
 # Job now takes MetadataT and audio bytes
 AudioProcessingJob: TypeAlias = Tuple[MetadataT, np.ndarray]
-# Result now returns MetadataT and transcription string
-TranscriptionResult: TypeAlias = Tuple[MetadataT, str]
 
+@dataclass
+class TranscriptionResult(Generic[MetadataT]):
+    """Represents the result of a transcription job."""
+    metadata: MetadataT
+    transcription: str
+    mean_logprob: float
+    std_logprob: float
+    n_tokens: int
 
 class Transcriber(Generic[MetadataT]):
     """Handles audio transcription sequentially, passing opaque metadata through."""
@@ -78,15 +85,7 @@ class Transcriber(Generic[MetadataT]):
             system_prompt_ids = self._processor.get_prompt_ids(WHISPER_PROMPT, return_tensors="pt")
         else:
             system_prompt_ids = torch.tensor([], dtype=torch.long)
-        
-        if not self._model_name.endswith(".en"):
-            lang_task_prompt_ids = torch.tensor(
-                [id for _, id in self._processor.get_decoder_prompt_ids(language="en", task="transcribe")],
-                dtype=torch.long,
-            )
-        else:
-            lang_task_prompt_ids = torch.tensor([], dtype=torch.long)
-        self._prompt_ids = torch.cat([lang_task_prompt_ids, system_prompt_ids], dim=-1).to(self._device)
+        self._prompt_ids = system_prompt_ids.to(self._device)
 
         self._pipe = WhisperLogprobPipeline(
             model=model,
@@ -177,6 +176,9 @@ class Transcriber(Generic[MetadataT]):
         if self._prompt_ids is not None:
             kwargs["prompt_ids"] = self._prompt_ids
             kwargs["prompt_condition_type"] = "first-segment"
+        if not self._model_name.endswith(".en"):
+            kwargs["language"] = "english"
+            kwargs["task"] = "transcribe"
 
         result: AudioPipelineOutput = self._pipe(
             inputs=audio_np,
@@ -185,12 +187,17 @@ class Transcriber(Generic[MetadataT]):
             batch_size=1,
             return_timestamps=False,
         )
-        print('result', result)
         transcription: str = _remap_phrases(result["text"].strip(), PHRASE_MAP)
 
         if transcription:
             try:
-                self._output_queue.put_nowait((metadata, transcription))
+                self._output_queue.put_nowait(TranscriptionResult(
+                    metadata=metadata,
+                    transcription=transcription,
+                    mean_logprob=result["mean_logprob"],
+                    std_logprob=result["std_logprob"],
+                    n_tokens=result["n_tokens"],
+                ))
             except asyncio.QueueFull:
                 print(f"Transcriber thread: WARNING - Output queue is full. Discarding transcription.")
 
@@ -202,49 +209,51 @@ class WhisperModelPatched(WhisperForConditionalGeneration):
         return super().forward(*args, **kwargs)
 
 class WhisperLogprobPipeline(AutomaticSpeechRecognitionPipeline):
-    """A subclass of the Whisper pipeline to also return logprobs, if present."""
+    """A subclass of the Whisper pipeline to also return logprob statistics."""
 
     def _forward(self, model_inputs, return_timestamps=False, **generate_kwargs):
-        print(generate_kwargs)
         return super()._forward(
             model_inputs,
             return_timestamps,
             **{
                 **generate_kwargs,
                 "output_scores": True,
+                "return_dict_in_generate": True,
             },
         )
 
     def postprocess(
         self,
-        model_outputs: dict[str, Any],
+        model_outputs: list[dict[str,Any]],
         return_timestamps: bool = False,
         return_language: bool = False,
     ) -> dict[str, Any]:
-        print('aaa', model_outputs)
-        result = super().postprocess(model_outputs, return_timestamps=return_timestamps, return_language=return_language)
-        print('bbbb', result, model_outputs)
-
-        # Skip if no scores (e.g., logprobs not requested)
-        scores = model_outputs.get("scores", None)
-        sequences = model_outputs.get("sequences", None)
-        if scores is None or sequences is None:
-            return result
-
-        logprobs = [torch.log_softmax(score, dim=-1) for score in scores]
-
-        # Estimate prompt length
-        prompt_len = self.model.config.forced_decoder_ids and len(self.model.config.forced_decoder_ids) or 0
-        token_ids = sequences[0][prompt_len:]
-
-        token_logprobs = [lp[token_id].item() for lp, token_id in zip(logprobs, token_ids)]
-        tokens = [self.tokenizer.decode([tid]).strip() for tid in token_ids]
-
-        # Add logprobs to output
-        result["tokens"] = tokens
-        result["logprobs"] = token_logprobs
-
-        return result
+        result = super().postprocess(
+            [
+                {
+                    "tokens": o["tokens"].sequences,
+                    "stride": o["stride"],
+                } for o in model_outputs
+            ],
+            return_timestamps=return_timestamps,
+            return_language=return_language,
+        )
+        # Skip past the injected prompt tokens.
+        first_token_idxs = [len(o["tokens"].sequences[0]) - len(o["tokens"].scores) for o in model_outputs]
+        # Get the token IDs after the prompt.
+        token_ids_list = [o["tokens"].sequences[0][f:] for o, f in zip(model_outputs, first_token_idxs)]
+        # Get all the logprobs for all the token IDs in every chunk.
+        all_logprobs = np.array([
+            torch.log_softmax(s[0], dim=-1)[tok_id].tolist() 
+             for tok_ids, scores in zip(token_ids_list, (o["tokens"].scores for o in model_outputs))
+             for tok_id, s in zip(tok_ids, scores)
+        ], dtype=np.float32)
+        return {
+            **result,
+            "n_tokens": all_logprobs.shape[0],
+            "mean_logprob": all_logprobs.mean().item(),
+            "std_logprob": all_logprobs.std().item(),
+        }
 
 def _remap_phrases(text: str, phrase_map: dict) -> str:
     # For each phrase, do a case-insensitive replacement

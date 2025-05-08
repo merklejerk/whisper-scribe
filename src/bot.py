@@ -12,14 +12,14 @@ from collections import deque
 import src.config as config
 from .wrapup import create_wrapup_from_log_entries
 from .logging import write_log_entry, load_log, LogEntry
-from .transcriber import Transcriber
+from .transcriber import Transcriber, TranscriptionResult
 from .voice_capture_sink import VoiceCaptureSink, VoiceMetadata
 from .patched_voice_client import PatchedVoiceClient
 from .refiner import TranscriptRefiner
 
 def get_session_log_path(session_name: str) -> str:
     """Returns the path to the session log file."""
-    return f"logs/{session_name}.ndjson"
+    return f"logs/{session_name}.jsonl"
 
 MAX_JOIN_TIMEOUT_SECONDS = 10.0
 RETRY_CONNECTION_SECONDS = 5.0
@@ -30,7 +30,7 @@ class DiscordBot(object):
     _client: Bot
     _vc: Optional[discord.VoiceClient]
     _sink: VoiceCaptureSink
-    _transcription_queue: asyncio.Queue
+    _transcription_queue: asyncio.Queue[TranscriptionResult]
     _capture_queue: asyncio.Queue
     _transcriber: Transcriber[VoiceMetadata]
     _refiner: TranscriptRefiner
@@ -44,6 +44,7 @@ class DiscordBot(object):
             *,
             session_name: Optional[str] = None,
             device: str = "cpu",
+            log_metadata: bool = False,
         ):
         # Setup Discord client and internal state
         intents = discord.Intents.default()
@@ -72,6 +73,7 @@ class DiscordBot(object):
         self._capture_consumer_task = None
         # Initialize recent log entries buffer
         self._recent_log_entries = deque(maxlen=config.REFINER_CONTEXT_LOG_LINES)
+        self._log_metadata = log_metadata
 
         # Regiser commands.
         self._client.add_command(Command(self._wrapup_command, name='wrapup'))
@@ -189,19 +191,28 @@ class DiscordBot(object):
         """Consumes transcription results, refines them, and logs them."""
         print("Transcription consumer task started.")
         while True:
-            metadata, content = await self._transcription_queue.get()
+            result = await self._transcription_queue.get()
+            user_id = result.metadata.user_id
+            user_name = result.metadata.user_name
+            capture_time = result.metadata.capture_time
+            content = result.transcription
             try:
                 if not re.search(r"[a-z0-9]+", content):
                     continue
                 # Refine the transcription
                 context_log = list(self._recent_log_entries)
                 entry = LogEntry(
-                    user_id=metadata.user_id,
-                    user_name=metadata.user_name,
-                    timestamp=metadata.capture_time,
+                    user_id=user_id,
+                    user_name=user_name,
+                    timestamp=capture_time,
                     content=content,
                     medium="voice",
-                    raw_content=content,
+                    metadata={
+                        "raw_content": content,
+                        "mean_logprob": result.mean_logprob,
+                        "std_logprob": result.std_logprob,
+                        "n_tokens": result.n_tokens,
+                    } if self._log_metadata else None,
                 )
                 refined_content = await self._refiner.refine(entry, context_log)
                 if not refined_content:

@@ -14,6 +14,7 @@ def main():
     bot_parser.add_argument("voice_channel_id", type=int, help="Voice channel ID to auto-join on startup.")
     bot_parser.add_argument("session_name", type=str, help="Session name to use for log file naming.")
     bot_parser.add_argument("--device", type=str, default="cpu", help="Device for Whisper model (e.g. 'cpu', 'cuda', 'mps')")
+    bot_parser.add_argument("--log-metadata", action="store_true", help="Include detailed metadata in log entries.")
 
     # Wrapup command
     process_parser = subparsers.add_parser("wrapup", help="Process a log file and generate an outline.")
@@ -30,6 +31,7 @@ def main():
                     voice_channel_id=args.voice_channel_id,
                     session_name=args.session_name,
                     device=args.device,
+                    log_metadata=args.log_metadata,
                 )
                 await bot.start(config.DISCORD_TOKEN)
             finally:

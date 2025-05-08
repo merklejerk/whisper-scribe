@@ -69,7 +69,7 @@ class WhisperModelPatched(WhisperForConditionalGeneration):
         return super().forward(*args, **kwargs)
 
 class WhisperLogprobPipeline(AutomaticSpeechRecognitionPipeline):
-    """A subclass of the Whisper pipeline to also return logprobs, if present."""
+    """A subclass of the Whisper pipeline to also return logprob statistics."""
 
     def _forward(self, model_inputs, return_timestamps=False, **generate_kwargs):
         return super()._forward(
@@ -88,22 +88,6 @@ class WhisperLogprobPipeline(AutomaticSpeechRecognitionPipeline):
         return_timestamps: bool = False,
         return_language: bool = False,
     ) -> dict[str, Any]:
-        # for o in model_outputs:
-        #     if isinstance(o, dict):
-        #         print("dict", o.keys())
-        #         tokens = o["tokens"]
-        #         if isinstance(tokens, torch.Tensor):
-        #             print(tokens, tokens.shape, tokens.dtype)
-        #         else:
-        #             print(tokens.sequences, tokens.scores, print(o["stride"]))
-        #     elif isinstance(o, torch.Tensor):
-        #         print(o.shape, o.dtype)
-        #     else:
-        #         print("ModelOutput", dir(o))
-        # outputs = [{
-        #     "tokens": model_outputs[0]["tokens"].sequences,
-        #     "stride": model_outputs[0]["stride"],
-        # }]
         result = super().postprocess(
             [
                 {
@@ -114,49 +98,22 @@ class WhisperLogprobPipeline(AutomaticSpeechRecognitionPipeline):
             return_timestamps=return_timestamps,
             return_language=return_language,
         )
+        # Skip past the injected prompt tokens.
         first_token_idxs = [len(o["tokens"].sequences[0]) - len(o["tokens"].scores) for o in model_outputs]
+        # Get the token IDs after the prompt.
         token_ids_list = [o["tokens"].sequences[0][f:] for o, f in zip(model_outputs, first_token_idxs)]
-        logprobs_list = [
-            [
-                torch.log_softmax(s[0], dim=-1)[tok_id] for tok_id, s in zip(tok_ids, scores)
-            ] for tok_ids, scores in zip(token_ids_list, (o["tokens"].scores for o in model_outputs))
-        ]
-        print([
-            [(self.tokenizer.decode(tok_id), logprob.tolist()) for tok_id, logprob in zip(tok_ids, logprobs)] for tok_ids, logprobs in zip(token_ids_list, logprobs_list)
-        ])
-
-        # logprobs = []
-        # for o in model_outputs:
-            
-        # print([(len(o["tokens"].sequences[0]), len(o["tokens"].scores)) for o in model_outputs])
-        # logprobs = [
-        #     [
-        #         torch.log_softmax(s, dim=-1)[o["tokens"].sequences[0][i]] if 
-        #         for i, s in enumerate(o["tokens"].scores)
-        #     ] for o in model_outputs
-        # ]
-        # print(logprobs, result)
-
-        # # Skip if no scores (e.g., logprobs not requested)
-        # scores = model_outputs.get("scores", None)
-        # sequences = model_outputs.get("sequences", None)
-        # if scores is None or sequences is None:
-        #     return result
-
-        # logprobs = [torch.log_softmax(score, dim=-1) for score in scores]
-
-        # # Estimate prompt length
-        # prompt_len = self.model.config.forced_decoder_ids and len(self.model.config.forced_decoder_ids) or 0
-        # token_ids = sequences[0][prompt_len:]
-
-        # token_logprobs = [lp[token_id].item() for lp, token_id in zip(logprobs, token_ids)]
-        # tokens = [self.tokenizer.decode([tid]).strip() for tid in token_ids]
-
-        # # Add logprobs to output
-        # result["tokens"] = tokens
-        # result["logprobs"] = token_logprobs
-
-        return result
+        # Get all the logprobs for all the token IDs in every chunk.
+        all_logprobs = np.array([
+            torch.log_softmax(s[0], dim=-1)[tok_id].tolist() 
+             for tok_ids, scores in zip(token_ids_list, (o["tokens"].scores for o in model_outputs))
+             for tok_id, s in zip(tok_ids, scores)
+        ], dtype=np.float32)
+        return {
+            **result,
+            "n_tokens": all_logprobs.shape[0],
+            "mean_logprob": all_logprobs.mean().item(),
+            "std_logprob": all_logprobs.std().item(),
+        }
     
 def transcribe_2(audio_fp16: np.ndarray) -> None:
     model = WhisperModelPatched.from_pretrained(
@@ -172,14 +129,14 @@ def transcribe_2(audio_fp16: np.ndarray) -> None:
     )
 
     system_prompt_ids = processor.get_prompt_ids("saison, beer.", return_tensors="pt")
-    if not MODEL_NAME.endswith(".en"):
-        lang_task_prompt_ids = torch.tensor(
-            [id for _, id in processor.get_decoder_prompt_ids(language="en", task="transcribe")],
-            dtype=torch.long,
-        )
-    else:
-        lang_task_prompt_ids = torch.tensor([], dtype=torch.long)
-    prompt_ids = torch.cat([lang_task_prompt_ids, system_prompt_ids], dim=-1).to("cuda:0")
+    # if not MODEL_NAME.endswith(".en"):
+    #     lang_task_prompt_ids = torch.tensor(
+    #         [id for _, id in processor.get_decoder_prompt_ids(language="en", task="transcribe", no_timestamps=False)],
+    #         dtype=torch.long,
+    #     )
+    # else:
+    #     lang_task_prompt_ids = torch.tensor([], dtype=torch.long)
+    prompt_ids = system_prompt_ids.to("cuda:0")
     print(processor.decode(prompt_ids.tolist()), len(prompt_ids))
 
     pipe = WhisperLogprobPipeline(
@@ -199,7 +156,8 @@ def transcribe_2(audio_fp16: np.ndarray) -> None:
         "condition_on_prev_tokens": True,
         "prompt_ids": prompt_ids,
         "prompt_condition_type": "first-segment",
-        # "return_segments": True,
+        "task": "transcribe",
+        "language": "en",
     }
     
     result = pipe(
@@ -207,7 +165,7 @@ def transcribe_2(audio_fp16: np.ndarray) -> None:
         generate_kwargs=kwargs,
         chunk_length_s=30,
         batch_size=1,
-        return_timestamps=False,
+        # return_timestamps=True,
     )
     print(result)
 

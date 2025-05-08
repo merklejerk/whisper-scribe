@@ -1,8 +1,8 @@
 import os
 import traceback
-from typing import List, Literal
+from typing import List, Literal, Any
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import aiofiles
 
 class LogEntry(BaseModel):
@@ -12,7 +12,11 @@ class LogEntry(BaseModel):
     timestamp: datetime
     content: str
     medium: Literal["text", "voice"] = "voice"
-    raw_content: str | None = None  # The pre-refined content, if available
+    metadata: Any = Field(required=False, default=None)
+
+    # Allow extra fields
+    class Config:
+        extra = "allow"
 
 def ensure_log_directory_for_file(log_path: str) -> None:
     """Ensure the directory for the given log file exists."""
@@ -30,7 +34,7 @@ async def write_log_entry(log_path: str, entry: LogEntry):
     ensure_log_directory_for_file(log_path)
     try:
         async with aiofiles.open(log_path, "a", encoding="utf-8") as sf:
-            await sf.write(entry.model_dump_json() + "\n")
+            await sf.write(entry.model_dump_json(exclude_none=True) + "\n")
     except IOError as e:
         print(f"Error writing log entry to file {log_path}: {e}")
         raise

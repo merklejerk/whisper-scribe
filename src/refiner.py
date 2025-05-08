@@ -46,7 +46,7 @@ class TranscriptRefiner:
             The refined transcription string.
         """
         if not self._client:
-            return transcription
+            return transcription.content
 
         print(f"Refining transcription from {transcription.user_name}...")
         
