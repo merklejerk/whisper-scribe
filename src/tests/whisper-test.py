@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 import soundfile as sf
 import librosa
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Any
 import torch
 from transformers import (
     Pipeline as WhisperPipeline,
@@ -14,6 +14,7 @@ from transformers import (
     WhisperForCausalLM,
     WhisperTokenizerFast,
     WhisperFeatureExtractor,
+    AutomaticSpeechRecognitionPipeline,
 )
 from src.debug_utils import debug_play_audio
 
@@ -60,13 +61,105 @@ def main() -> None:
     audio_fp16 = wav_to_fp16(args.wav_file, TARGET_SR)
     transcribe_2(audio_fp16)
 
-class WhisperOverride(WhisperForConditionalGeneration):
+class WhisperModelPatched(WhisperForConditionalGeneration):
+    """A subclass of WhisperForConditionalGeneration to override the forward method to fix
+        a bug that occurs when using `no_speech_threshold`."""
     def forward(self, *args, **kwargs):
         kwargs.pop('input_ids', None)
         return super().forward(*args, **kwargs)
+
+class WhisperLogprobPipeline(AutomaticSpeechRecognitionPipeline):
+    """A subclass of the Whisper pipeline to also return logprobs, if present."""
+
+    def _forward(self, model_inputs, return_timestamps=False, **generate_kwargs):
+        return super()._forward(
+            model_inputs,
+            return_timestamps,
+            **{
+                **generate_kwargs,
+                "output_scores": True,
+                "return_dict_in_generate": True,
+            },
+        )
+
+    def postprocess(
+        self,
+        model_outputs: list[dict[str,Any]],
+        return_timestamps: bool = False,
+        return_language: bool = False,
+    ) -> dict[str, Any]:
+        # for o in model_outputs:
+        #     if isinstance(o, dict):
+        #         print("dict", o.keys())
+        #         tokens = o["tokens"]
+        #         if isinstance(tokens, torch.Tensor):
+        #             print(tokens, tokens.shape, tokens.dtype)
+        #         else:
+        #             print(tokens.sequences, tokens.scores, print(o["stride"]))
+        #     elif isinstance(o, torch.Tensor):
+        #         print(o.shape, o.dtype)
+        #     else:
+        #         print("ModelOutput", dir(o))
+        # outputs = [{
+        #     "tokens": model_outputs[0]["tokens"].sequences,
+        #     "stride": model_outputs[0]["stride"],
+        # }]
+        result = super().postprocess(
+            [
+                {
+                    "tokens": o["tokens"].sequences,
+                    "stride": o["stride"],
+                } for o in model_outputs
+            ],
+            return_timestamps=return_timestamps,
+            return_language=return_language,
+        )
+        first_token_idxs = [len(o["tokens"].sequences[0]) - len(o["tokens"].scores) for o in model_outputs]
+        token_ids_list = [o["tokens"].sequences[0][f:] for o, f in zip(model_outputs, first_token_idxs)]
+        logprobs_list = [
+            [
+                torch.log_softmax(s[0], dim=-1)[tok_id] for tok_id, s in zip(tok_ids, scores)
+            ] for tok_ids, scores in zip(token_ids_list, (o["tokens"].scores for o in model_outputs))
+        ]
+        print([
+            [(self.tokenizer.decode(tok_id), logprob.tolist()) for tok_id, logprob in zip(tok_ids, logprobs)] for tok_ids, logprobs in zip(token_ids_list, logprobs_list)
+        ])
+
+        # logprobs = []
+        # for o in model_outputs:
+            
+        # print([(len(o["tokens"].sequences[0]), len(o["tokens"].scores)) for o in model_outputs])
+        # logprobs = [
+        #     [
+        #         torch.log_softmax(s, dim=-1)[o["tokens"].sequences[0][i]] if 
+        #         for i, s in enumerate(o["tokens"].scores)
+        #     ] for o in model_outputs
+        # ]
+        # print(logprobs, result)
+
+        # # Skip if no scores (e.g., logprobs not requested)
+        # scores = model_outputs.get("scores", None)
+        # sequences = model_outputs.get("sequences", None)
+        # if scores is None or sequences is None:
+        #     return result
+
+        # logprobs = [torch.log_softmax(score, dim=-1) for score in scores]
+
+        # # Estimate prompt length
+        # prompt_len = self.model.config.forced_decoder_ids and len(self.model.config.forced_decoder_ids) or 0
+        # token_ids = sequences[0][prompt_len:]
+
+        # token_logprobs = [lp[token_id].item() for lp, token_id in zip(logprobs, token_ids)]
+        # tokens = [self.tokenizer.decode([tid]).strip() for tid in token_ids]
+
+        # # Add logprobs to output
+        # result["tokens"] = tokens
+        # result["logprobs"] = token_logprobs
+
+        return result
     
 def transcribe_2(audio_fp16: np.ndarray) -> None:
-    model = WhisperOverride.from_pretrained(
+    model = WhisperModelPatched.from_pretrained(
         MODEL_NAME,
         torch_dtype=torch.float16,
         low_cpu_mem_usage=True,
@@ -77,8 +170,19 @@ def transcribe_2(audio_fp16: np.ndarray) -> None:
         tokenizer=WhisperTokenizerFast.from_pretrained(MODEL_NAME),
         feature_extractor=WhisperFeatureExtractor.from_pretrained(MODEL_NAME, return_attention_mask=True),
     )
-    pipe = pipeline(
-        "automatic-speech-recognition",
+
+    system_prompt_ids = processor.get_prompt_ids("saison, beer.", return_tensors="pt")
+    if not MODEL_NAME.endswith(".en"):
+        lang_task_prompt_ids = torch.tensor(
+            [id for _, id in processor.get_decoder_prompt_ids(language="en", task="transcribe")],
+            dtype=torch.long,
+        )
+    else:
+        lang_task_prompt_ids = torch.tensor([], dtype=torch.long)
+    prompt_ids = torch.cat([lang_task_prompt_ids, system_prompt_ids], dim=-1).to("cuda:0")
+    print(processor.decode(prompt_ids.tolist()), len(prompt_ids))
+
+    pipe = WhisperLogprobPipeline(
         model=model,
         tokenizer=processor.tokenizer,
         feature_extractor=processor.feature_extractor,
@@ -86,26 +190,22 @@ def transcribe_2(audio_fp16: np.ndarray) -> None:
         device="cuda:0",
     )
 
-    prompt_ids = processor.get_prompt_ids("saison, beer.", return_tensors="pt").to("cuda:0")
-
     kwargs = {
-        "temperature": (0., 0.1, 0.2),
+        "temperature": (0., 0.1, 0.25, 0.5),
         "forced_decoder_ids": None,
-        "logprob_threshold": -1.5,
+        "logprob_threshold": -1.25,
         "compression_ratio_threshold": 2.4,
         "no_speech_threshold": 0.33,
-        "language": "english",
-        "task": "transcribe",
         "condition_on_prev_tokens": True,
         "prompt_ids": prompt_ids,
         "prompt_condition_type": "first-segment",
+        # "return_segments": True,
     }
-
     
     result = pipe(
         inputs=audio_fp16,
         generate_kwargs=kwargs,
-        chunk_length_s=10,
+        chunk_length_s=30,
         batch_size=1,
         return_timestamps=False,
     )
