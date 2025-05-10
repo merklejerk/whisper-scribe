@@ -16,6 +16,7 @@ from .transcriber import Transcriber, TranscriptionResult
 from .voice_capture_sink import VoiceCaptureSink, VoiceMetadata
 from .patched_voice_client import PatchedVoiceClient
 from .refiner import TranscriptRefiner
+from .github_gist import create_gist_from_paths
 
 def get_session_log_path(session_name: str) -> str:
     """Returns the path to the session log file."""
@@ -45,6 +46,7 @@ class DiscordBot(object):
             session_name: Optional[str] = None,
             device: str = "cpu",
             log_metadata: bool = False,
+            upload_gist: bool = False,
         ):
         # Setup Discord client and internal state
         intents = discord.Intents.default()
@@ -74,6 +76,7 @@ class DiscordBot(object):
         # Initialize recent log entries buffer
         self._recent_log_entries = deque(maxlen=config.REFINER_CONTEXT_LOG_LINES)
         self._log_metadata = log_metadata
+        self._upload_gist = upload_gist
 
         # Regiser commands.
         self._client.add_command(Command(self._wrapup_command, name='wrapup'))
@@ -327,15 +330,24 @@ class DiscordBot(object):
                 self.session_name,
             )
             print("Wrapup generation complete.")
+            if self._upload_gist:
+                paths = [wrapup_files.chatlog_path]
+                if wrapup_files.outline_path:
+                    paths.append(wrapup_files.outline_path)
+                url = await create_gist_from_paths(
+                    paths,
+                    description=f"Wrapup for {self.session_name}",
+                )
+                await ctx.send(f"🎁 <{url}>")
+            else:
+                files_to_upload = [
+                    discord.File(wrapup_files.chatlog_path),
+                ]
+                if wrapup_files.outline_path:
+                    files_to_upload.append(discord.File(wrapup_files.outline_path))
 
-            files_to_upload = [
-                discord.File(wrapup_files.chatlog_path),
-            ]
-            if wrapup_files.outline_path:
-                files_to_upload.append(discord.File(wrapup_files.outline_path))
-
-            print(f"Uploading {len(files_to_upload)} files to channel {ctx.channel.id}...")
-            await ctx.send("🎁", files=files_to_upload)
+                print(f"Uploading {len(files_to_upload)} files to channel {ctx.channel.id}...")
+                await ctx.send("🎁", files=files_to_upload)
 
         except Exception as e:
             await ctx.send(f"Failed to generate wrapup.")
@@ -355,6 +367,13 @@ class DiscordBot(object):
             outline=False  # Only generate chatlog, not outline
         )
         print("Chatlog generation complete.")
-        files_to_upload = [discord.File(wrapup_files.chatlog_path)]
-        print(f"Uploading chatlog to channel {ctx.channel.id}...")
-        await ctx.send("📝", files=files_to_upload)
+        if self._upload_gist:
+            url = await create_gist_from_paths(
+                [wrapup_files.chatlog_path],
+                description=f"Chatlog for {self.session_name}",
+            )
+            await ctx.send(f"📝 <{url}>")
+        else:
+            files_to_upload = [discord.File(wrapup_files.chatlog_path)]
+            print(f"Uploading chatlog to channel {ctx.channel.id}...")
+            await ctx.send("📝", files=files_to_upload)
