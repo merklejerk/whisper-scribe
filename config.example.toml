@@ -42,8 +42,8 @@ tips = []
 # Configuration for the transcript refiner using Ollama
 [refiner]
 # The name of the Ollama model to use for refining transcripts.
-# Leave this blank to disable the refiner
-model = "hf.co/google/gemma-3-12b-it-qat-q4_0-gguf:latest"
+# Leave this blank or omit it to disable the refiner
+# model = "hf.co/google/gemma-3-12b-it-qat-q4_0-gguf:latest"
 # The number of previous log entries to provide as context to the refiner model
 context_log_lines = 10
 # The temperature for the refiner model (0.0-1.0, lower = more deterministic)
