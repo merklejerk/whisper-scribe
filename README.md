@@ -48,6 +48,7 @@ poetry run python -m src.cli VOICE_CHANNEL_ID SESSION_NAME
 - The bot will instantly join the voice channel you provide and start transcribing to `logs/{SESSION_NAME}.ndjson`.
 - At any time you can say `!wrapup` in the voice channel's text channel to have the bot produce wrapup files (transcript + session summary), which get posted to chat and also saved to `wrapup/`.
 - You can also say `!log` to just generate the transcript.
+- If you provide a github token and the `--gist` CLI flag, it'll upload wrapup/log files to github gist instead of directly to discord.
 
 Unless everyone in your group has a AAA podcasting setup in a perfect environment, transcripts will probably be riddled with artifacts and misheard words. Adding your most commonly used proper nouns to the `whisper.prompt` config can help. However, I do find that modern retail LLMs are actually pretty good at teasing out a remarkably cohesive narrative from low quality transcripts, so you can probably still get a useful wrapup summary.
 
