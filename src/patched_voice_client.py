@@ -18,7 +18,8 @@ class PatchedVoiceClient(discord.VoiceClient):
             super().unpack_audio(data)
         except IndexError as e:
             # This is recoverable. Just ignore it.
-            print(f"Suppressed VoiceClient IndexError: {e}, data: {data.hex()}")
+            # print(f"Suppressed VoiceClient IndexError: {e}, data: {data.hex()}")
+            pass
         except nacl.exceptions.CryptoError as e:
             # 0002004600019e0c3137332e3136382e37342e31333700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009f8e
             print(f"Encountered CryptError {e}, data: {data.hex()}")
