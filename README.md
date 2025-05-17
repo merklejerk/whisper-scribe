@@ -52,6 +52,10 @@ poetry run python -m src.cli VOICE_CHANNEL_ID SESSION_NAME
 
 Unless everyone in your group has a AAA podcasting setup in a perfect environment, transcripts will probably be riddled with artifacts and misheard words. Adding your most commonly used proper nouns to the `whisper.prompt` config can help. However, I do find that modern retail LLMs are actually pretty good at teasing out a remarkably cohesive narrative from low quality transcripts, so you can probably still get a useful wrapup summary.
 
+## Example Output
+
+You can find a log and outline generated from a real session [HERE](https://gist.github.com/merklejerk/25c4504a51c7e67b1c7a3b5199459a49).
+
 ## How It Works
 
 - `py-cord` provides Discord API and voice channel access for real-time audio capture and bot stuff.
