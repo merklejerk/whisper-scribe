@@ -130,15 +130,15 @@ class DiscordBot(object):
         Handles updating self._vc and self._sink.
         """
         # Disconnect any existing voice client.
-        channel = await self._client.fetch_channel(channel_id)
-        if not isinstance(channel, discord.VoiceChannel):
-            raise ValueError(f"Error: Channel ID {channel_id} is not a voice channel or not found.")
-
         if self._vc:
             if self._vc.is_connected():
                 await self._vc.disconnect(force=True)
             print("Forcibly disconnected old voice client.")
             self._vc = None
+
+        channel = await self._client.fetch_channel(channel_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            raise ValueError(f"Error: Channel ID {channel_id} is not a voice channel or not found.")
 
         try:
             self._transcriber.start()
