@@ -27,6 +27,7 @@ RETRY_CONNECTION_SECONDS = 5.0
 class DiscordBot(object):
     session_name: str
     voice_channel_id: int
+    guild_id: Optional[int]
     _client: Bot
     _vc: Optional[discord.VoiceClient]
     _sink: VoiceCaptureSink
@@ -52,6 +53,7 @@ class DiscordBot(object):
         intents.voice_states = True
         self._client = Bot(intents=intents, command_prefix="!")
         self.voice_channel_id = voice_channel_id
+        self.guild_id = None  # Will be set when the bot connects to the voice channel
         # Use a timestamp for session id if not provided.
         self.session_name = session_name or datetime.datetime.now().strftime("%d-%m-%Y_%H%M")
 
@@ -108,8 +110,8 @@ class DiscordBot(object):
         await self._client.start(api_key)
 
     def _command_check(self, ctx: Any) -> bool:
-        # Command must be invoked in the voice channel.
-        if ctx.channel.id != self.voice_channel_id:
+        # Command must be invoked in the same guild as the voice channel.
+        if not self.guild_id or ctx.channel.guild.id != self.guild_id:
             return False
         # Must be invoked by an allowed user.
         if config.ALLOWED_COMMANDERS:
@@ -143,6 +145,7 @@ class DiscordBot(object):
                 timeout=MAX_JOIN_TIMEOUT_SECONDS,
             )
             print(f"Successfully joined voice channel: {channel.name} (ID: {channel.id})")
+            self.guild_id = channel.guild.id
 
             await self._sink.start(vc)
 
