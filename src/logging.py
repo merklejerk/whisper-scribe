@@ -12,7 +12,7 @@ class LogEntry(BaseModel):
     timestamp: datetime
     content: str
     medium: Literal["text", "voice"] = "voice"
-    metadata: Any = Field(required=False, default=None)
+    metadata: Any = Field(default=None)
 
     # Allow extra fields
     class Config:
@@ -28,7 +28,7 @@ def ensure_log_directory_for_file(log_path: str) -> None:
         except OSError as e:
             print(f"Error creating log directory {directory}: {e}")
 
-async def write_log_entry(log_path: str, entry: LogEntry):
+async def write_log_entry(log_path: str, entry: LogEntry) -> None:
     """Appends a single log entry to the specified log file path."""
 
     ensure_log_directory_for_file(log_path)

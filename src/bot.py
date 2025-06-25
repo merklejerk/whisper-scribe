@@ -2,7 +2,7 @@ import discord
 from discord.ext.commands import Bot,Command
 import asyncio
 import datetime
-from typing import Optional, Any
+from typing import Optional, Any, cast, Callable
 import asyncio
 import re
 import os
@@ -15,7 +15,6 @@ from .logging import write_log_entry, load_log, LogEntry
 from .transcriber import Transcriber, TranscriptionResult
 from .voice_capture_sink import VoiceCaptureSink, VoiceMetadata
 from .patched_voice_client import PatchedVoiceClient
-from .refiner import TranscriptRefiner
 from .github_gist import create_gist_from_paths
 
 def get_session_log_path(session_name: str) -> str:
@@ -34,7 +33,6 @@ class DiscordBot(object):
     _transcription_queue: asyncio.Queue[TranscriptionResult]
     _capture_queue: asyncio.Queue
     _transcriber: Transcriber[VoiceMetadata]
-    _refiner: TranscriptRefiner
     _transcription_consumer_task: Optional[asyncio.Task]
     _capture_consumer_task: Optional[asyncio.Task]
     _recent_log_entries: deque[LogEntry]
@@ -68,13 +66,11 @@ class DiscordBot(object):
             model_name=config.WHISPER_MODEL,
             device=device
         )
-        self._refiner = TranscriptRefiner()
         # Task for consuming transcriptions
         self._transcription_consumer_task = None
         # Task for consuming capture queue and submitting jobs
         self._capture_consumer_task = None
         # Initialize recent log entries buffer
-        self._recent_log_entries = deque(maxlen=config.REFINER_CONTEXT_LOG_LINES)
         self._log_metadata = log_metadata
         self._upload_gist = upload_gist
 
@@ -92,12 +88,10 @@ class DiscordBot(object):
         log_path = get_session_log_path(self.session_name)
         entries = await load_log(log_path, allow_missing=True)
         # Only keep the last N entries
-        for entry in entries[-config.REFINER_CONTEXT_LOG_LINES:]:
-            self._recent_log_entries.append(entry)
         if len(self._recent_log_entries) != 0:
             print(f"Bootstrapped _recent_log_entries with {len(self._recent_log_entries)} entries from log.")
 
-    async def start(self, api_key: str, *, on_ready: Optional[callable] = None):
+    async def start(self, api_key: str, *, on_ready: Optional[Callable] = None):
         await self.bootstrap_recent_log_entries()
         self._transcription_consumer_task = asyncio.create_task(
             self._process_transcription_queue(),
@@ -175,11 +169,18 @@ class DiscordBot(object):
                 await self._vc.disconnect(force=True)
             self._vc = None
             raise
+    
+    @property
+    def _user(self) -> discord.User:
+        user = self._client.user
+        if user is None:
+            raise RuntimeError("Bot user not available.")
+        return cast(discord.User, user)
 
     # Called when the bot successfully connects and is ready.
     async def _on_ready(self) -> None:
         """Called when the bot successfully connects and is ready."""
-        print(f'Logged in as {self._client.user.name} (ID: {self._client.user.id})')
+        print(f'Logged in as {self._user.name} (ID: {self._user.id})')
         # Automatically connect to the specified voice channel.
         await self.join_channel(self.voice_channel_id)
 
@@ -191,7 +192,7 @@ class DiscordBot(object):
         )
 
     async def _process_transcription_queue(self):
-        """Consumes transcription results, refines them, and logs them."""
+        """Consumes transcription results and logs them."""
         print("Transcription consumer task started.")
         while True:
             result = await self._transcription_queue.get()
@@ -202,8 +203,6 @@ class DiscordBot(object):
             try:
                 if not re.search(r"[a-z0-9]+", content):
                     continue
-                # Refine the transcription
-                context_log = list(self._recent_log_entries)
                 entry = LogEntry(
                     user_id=user_id,
                     user_name=user_name,
@@ -217,16 +216,7 @@ class DiscordBot(object):
                         "n_tokens": result.n_tokens,
                     } if self._log_metadata else None,
                 )
-                refined_content = await self._refiner.refine(entry, context_log)
-                if not refined_content:
-                    print(f"Rejected transcript for {entry.user_name}:\n\t\"{entry.content}\"")
-                    continue
-                if refined_content != content:
-                    print(f"Refined transcript for {entry.user_name}:\n\t--- \"{entry.content}\"\n\t+++ \"{refined_content}\"")
-                entry.content = refined_content
                 self._recent_log_entries.append(entry)
-
-                # Log the refined transcription
                 await self.write_log_entry(entry)
             except Exception as e:
                 print(f"Error processing transcription: {e}")

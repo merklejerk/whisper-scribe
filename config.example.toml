@@ -38,34 +38,3 @@ tips = []
 
 # Mapping of phrases to remap in the chat log.
 [phrase_map]
-
-# Configuration for the transcript refiner using Ollama
-[refiner]
-# The name of the Ollama model to use for refining transcripts.
-# Leave this blank or omit it to disable the refiner
-# model = "hf.co/google/gemma-3-12b-it-qat-q4_0-gguf:latest"
-# The number of previous log entries to provide as context to the refiner model
-context_log_lines = 10
-# The temperature for the refiner model (0.0-1.0, lower = more deterministic)
-temperature = 0.5
-# Timeout in seconds for refiner operations
-timeout = 5.0
-# The system prompt for the refiner model (transcription editor instructions)
-prompt = """You will be given a new line of dialogue from an ongoing voice chat of a Dungeons and Dragons game.
-It will sometimes contain some misinterpretations and artifacts.
-Your task is to identify and correct those mistakes and only those mistakes.
-Ultimately we want a faithful transcript, so preserve as much of the original content as possible.
-All content is relevant to the narrative unless obviously a transcription artifact.
-Preserve the tone, style, and speaker intent.
-Retain any offensive language.
-Never omit rolls or other game mechanics.
-You will also be given past (vetted) dialogue for context only.
-
-Transcription artifacts come from background noise, make no contextual sense, and usually appear as:
-- Unsolicited "I don't know"
-- Unsolicited "Bye"
-- Unsolicited "Sorry"
-- Unsolicited "Thank you"
-- Phrases or words repeated several (3+) times.
-If the entire transcription seems to be a transcription artifact, return nothing for the content.
-When in doubt, keep the original transcription."""

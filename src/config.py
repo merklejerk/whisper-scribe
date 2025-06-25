@@ -38,7 +38,7 @@ VAD_THRESHOLD: Final[float] = bot_config.get("voice", {}).get("vad_threshold", 0
 # Maximum allowed speech buffer length in seconds
 MAX_SPEECH_BUF_SECONDS: Final[int] = bot_config.get("voice", {}).get("max_speech_buf_seconds", 0)
 
-OPENAI_API_KEY: Final[str] = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY: Final[str | None] = os.getenv("OPENAI_API_KEY")
 
 # OpenAI GPT Model for summarization
 OPENAI_GPT_MODEL: Final[str] = bot_config.get("wrapup", {}).get("model", "gpt-4o-mini")
@@ -47,14 +47,6 @@ TIPS: Final[Optional[list[str]]] = bot_config.get("wrapup", {}).get("tips")
 PHRASE_MAP: Final[Optional[list[str]]] = bot_config.get("phrase_map", {})
 # Username remapping for chatlog
 USERNAME_MAP: Final[dict[str, str]] = bot_config.get("username_map", {})
-
-# Refiner Configuration
-# Default to None if not specified in config
-REFINER_OLLAMA_MODEL: Final[Optional[str]] = bot_config.get("refiner", {}).get("model") 
-REFINER_CONTEXT_LOG_LINES: Final[int] = bot_config.get("refiner", {}).get("context_log_lines", 10)
-REFINER_TEMPERATURE: Final[float] = bot_config.get("refiner", {}).get("temperature", 0.1)
-REFINER_TIMEOUT: Final[float] = bot_config.get("refiner", {}).get("timeout", 5.0)
-REFINER_SYSTEM_PROMPT: Final[str] = bot_config.get("refiner", {}).get("prompt")
 
 # Validation
 def validate_config() -> bool:
