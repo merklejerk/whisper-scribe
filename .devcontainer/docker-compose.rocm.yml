@@ -1,0 +1,28 @@
+services:
+  llm_dev:
+    extends:
+      file: docker-compose.cpu.yml
+      service: llm_dev
+    build:
+      dockerfile: "Dockerfile.rocm"
+      args:
+        BASE_IMAGE: "ubuntu:24.04"
+        BACKEND: "rocm" 
+    environment:
+      - BACKEND=rocm
+      - HSA_OVERRIDE_GFX_VERSION=11.0.0
+      - HSA_ENABLE_SDMA=0
+      - GPU_MAX_HEAP_SIZE=100
+      - GPU_MAX_ALLOC_PERCENT=100
+      - HSA_TOOLS_LIB=
+      - ROCM_HOME=/opt/rocm
+      - CUDA_HOME=/opt/rocm
+      - HIP_VISIBLE_DEVICES=0,1
+      - CUDA_VISIBLE_DEVICES=0,1
+      - PYTORCH_ROCM_DEVICE=0,1
+      - TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video

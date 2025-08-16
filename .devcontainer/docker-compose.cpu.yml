@@ -1,0 +1,23 @@
+services:
+  llm_dev:
+    build:
+      context: .
+      dockerfile: "Dockerfile"
+      args:
+        BASE_IMAGE: "intel/intel-extension-for-pytorch:2.6.0-pip-base"
+    environment:
+      - HF_HOME=/home/user/.cache/huggingface
+      - UV_LINK_MODE=symlink
+      - BACKEND=cpu
+    volumes:
+      - ../:/workspace
+      - ${HOME}/.cache/huggingface:/home/user/.cache/huggingface
+      - ${HOME}/.cache/uv:/home/user/.cache/uv
+    security_opt:
+      - seccomp:unconfined
+    ipc: host
+    shm_size: 8g
+    network_mode: host
+    working_dir: /workspace
+    entrypoint: ["/bin/sh"]
+    command: ["-c", "while sleep 1000; do :; done"]

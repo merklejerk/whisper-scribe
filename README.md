@@ -4,26 +4,19 @@
 
 *WhisperScribe* is a self-hosted Discord bot for live, multi-user voice transcription and automated session summarization, designed for tabletop RPGs. It leverages local speech-to-text transformer models (Whisper) to transcribe Discord voice and text channels as you play. In chat, users can command the bot to post session logs and an AI-generated session summary (requires OpenAI key).
 
-## Requirements
-
-- Python 3.13+
-- Poetry for dependency management
-- OpenAI API key (for session summaries)
-
 ## Installation
+
+This project expects the appropriate architecture-specific python dependencies (e.g., torch) to be installed in the active python `VIRTUAL_ENV`. It's recommended to just use the included devcontainer config and run the project within that to manage those dependencies for you and make life simpler.
 
 ### 1. Clone the repo
 ```bash
 git clone git@github.com:merklejerk/whisper-scribe.git
 cd whisper-scribe
 ```
-### 2. Install dependencies
+### 2. Create virtual env and install dependencies
 ```bash
-poetry install
-```
-If you want to use GPU acceleration on an AMD card, you will need to manually install the rocm version of pytorch libs:
-```bash
-poetry run pip install -I 'torch==2.7' 'torchaudio==2.7' --index-url https://download.pytorch.org/whl/rocm6.3
+uv --system-site-packages --system
+uv sync
 ```
 ### 3. Configure environment
 Copy `.env.example` to `.env` and populate it with your secrets:
@@ -39,9 +32,9 @@ If you're planning on running this CPU-only, I recommend setting your whisper `m
 
 ## Usage
 
-Run the bot with Poetry:
+Run the bot with uv:
 ```bash
-poetry run python -m src.cli VOICE_CHANNEL_ID SESSION_NAME
+uv run cli -m src.cli VOICE_CHANNEL_ID SESSION_NAME
 ```
 
 - Voice channel ID is the numeric ID of the channel.

@@ -1,11 +1,10 @@
 import os
 import numpy as np
-import sounddevice as sd
 from scipy.signal import resample_poly
-import soundfile as sf
 
 DEBUG = os.getenv('DEBUG', '0') == '1'
 if os.getenv('DEBUG'):
+    import soundfile as sf
     import sounddevice as sd
 
 def debug_play_audio(audio_np: np.ndarray, input_sr: int):
