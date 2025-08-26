@@ -1,0 +1,7 @@
+*.log
+*.txt
+logs/
+wrapups/
+__pycache__
+debug.wav
+/.venv

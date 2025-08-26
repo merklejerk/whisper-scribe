@@ -6,6 +6,13 @@
 # List of (numeric) user IDs allowed to use commands
 allowed_commanders = []
 
+# Networking config
+[net]
+# URL for the AI service.
+ai_service_url = "ws://localhost:8771"
+# Size of audio chunks in milliseconds sent to the Python service.
+# chunk_ms = 1000
+
 # Whisper model configuration
 [whisper]
 # Model name for speech-to-text
