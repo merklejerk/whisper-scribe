@@ -5,13 +5,15 @@ import {
 	WrapupRequestMessage,
 } from './messages.js';
 import { PerUserVoiceChunker, VoiceChunk } from './voiceReceiver.js';
+import { UserDirectory } from './userDirectory.js';
 import { pcm16ToBase64 } from './audioUtils.js';
 import fs from 'fs';
 import path from 'path';
 import paths from './paths.js';
-import { readLogEntriesStrict, formatLogLines } from './logs.js';
+import { readLogEntriesStrict, formatLogLines, JsonlLogEntry } from './logs.js';
+import { toWrapupLogEntry } from './messages.js';
 import { PythonWsClient } from './websocketClient.js';
-import { Message } from 'discord.js';
+import { Message, AttachmentBuilder } from 'discord.js';
 import { debug } from './debug.js';
 
 export interface SessionConfig {
@@ -21,6 +23,7 @@ export interface SessionConfig {
 	startTimestamp: number; // epoch seconds (float)
 	sessionName: string;
 	aiServiceUrl: string;
+	userDirectory: UserDirectory;
 }
 
 export class Session {
@@ -38,13 +41,14 @@ export class Session {
 		this.chunker = new PerUserVoiceChunker(
 			{
 				targetSampleRate: 16000,
-				chunkMs: 500,
+				chunkMs: 1000,
 			},
 			this.handleAudioChunk,
+			sessionInfo.userDirectory,
+			sessionInfo.guildId,
 		);
 
 		this.websocketClient = new PythonWsClient(sessionInfo.aiServiceUrl, (msg) => {
-			debug('Received message from Python service:', msg);
 			if (msg.type === 'transcription') {
 				this.handleTranscription(msg as TranscriptionMessage);
 			} else if (msg.type === 'summarize.response') {
@@ -92,35 +96,65 @@ export class Session {
 		return this.chunker;
 	}
 
+	public async logTextMessage(message: Message) {
+		const displayName =
+			(await this.sessionInfo.userDirectory.ensureDisplayName(
+				message.author.id,
+				this.sessionInfo.guildId,
+			)) ?? message.author.displayName;
+
+		debug(`Logging text message from ${displayName}: ${message.content}`);
+
+		if (this.logStream) {
+			const ts = message.createdTimestamp / 1000;
+			const out: JsonlLogEntry = {
+				userId: message.author.id,
+				displayName,
+				startTs: ts,
+				endTs: ts,
+				origin: 'text',
+				text: message.content,
+			};
+			this.logStream.write(JSON.stringify(out) + '\n');
+		}
+	}
+
 	private handleAudioChunk = (chunk: VoiceChunk) => {
 		// Convert internal VoiceChunk -> AudioChunkMessage for IPC
 		const audioMsg: AudioChunkMessage = {
 			v: 1,
 			type: 'audio.chunk',
-			user_id: chunk.user_id,
+			user_id: chunk.userId,
 			index: chunk.index,
-			pcm_format: chunk.pcm_format,
-			started_ts: chunk.started_ts,
-			capture_ts: chunk.capture_ts,
+			pcm_format: {
+				sr: chunk.pcmFormat.sampleRate,
+				channels: chunk.pcmFormat.channels,
+				sample_width: chunk.pcmFormat.sampleWidth,
+			},
+			started_ts: chunk.startedTs,
+			capture_ts: chunk.captureTs,
 			data_b64: pcm16ToBase64(chunk.pcm16),
 		};
 		this.websocketClient.send(audioMsg);
-		debug(`Sent audio chunk ${chunk.index} for user ${chunk.user_id}`);
+		debug(`Sent audio chunk ${chunk.index} for user ${chunk.userId}`);
 	};
 
 	private handleTranscription = (segment: TranscriptionMessage) => {
-		// TODO: Post to Discord channel
-		const userName = 'TODO'; // TODO: look up from session
-		console.log(`[${userName}]: ${segment.text}`);
+		// Prefer directory display name; fall back to user_id when unknown
+		const display = this.sessionInfo.userDirectory.getDisplayNameSync(
+			segment.user_id,
+			this.sessionInfo.guildId,
+		);
+		const userName = display && display.length ? display : segment.user_id;
 		debug('Received transcription:', segment);
 		// Append JSONL line to log file
 		if (this.logStream) {
-			const out = {
-				user_id: segment.user_id,
-				user_name: userName,
-				// TODO: we need to reconstruct these from the audio chunks
-				// start_ts: segment.start_ts,
-				// end_ts: segment.end_ts,
+			const out: JsonlLogEntry = {
+				userId: segment.user_id,
+				displayName: userName,
+				startTs: segment.capture_ts,
+				endTs: segment.end_ts,
+				origin: 'voice',
 				text: segment.text,
 			};
 			// any async error will trigger the stream 'error' handler and exit
@@ -139,7 +173,7 @@ export class Session {
 			type: 'summarize.request',
 			session_name: this.sessionInfo.sessionName,
 			start_ts: this.sessionInfo.startTimestamp,
-			log_entries: entries as any[],
+			log_entries: entries.map(toWrapupLogEntry),
 			request_id: requestId,
 		};
 		this.websocketClient.send(wrapupReq);
@@ -188,21 +222,24 @@ ${response.outline}
 		const entries = await this.readLogEntries();
 		const logContent = formatLogLines(entries as any);
 
-		const replyContent = `
-**Session Log for: ${this.sessionInfo.sessionName}**
-\`\`\`
-${logContent || 'Log is empty.'}
-\`\`\`
-`;
+		const attachment = new AttachmentBuilder(
+			Buffer.from(logContent || 'Log is empty.', 'utf-8'),
+			{
+				name: `${this.sessionInfo.sessionId}_log.txt`,
+			},
+		);
 
 		try {
-			await message.reply(replyContent);
+			await message.reply({
+				content: `**Session Log for: ${this.sessionInfo.sessionName}**`,
+				files: [attachment],
+			});
 		} catch (e) {
 			console.error('Failed to send log reply to Discord:', e);
 		}
 	};
 
-	private async readLogEntries(): Promise<any[]> {
+	private async readLogEntries(): Promise<JsonlLogEntry[]> {
 		debug(`Reading log entries from: ${this.logFilePath}`);
 		return await readLogEntriesStrict(this.logFilePath);
 	}

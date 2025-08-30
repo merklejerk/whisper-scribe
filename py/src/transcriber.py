@@ -7,13 +7,13 @@ from dataclasses import dataclass
 from transformers import pipeline, WhisperProcessor
 
 from .devices import resolve_device
+from .debug import make_debug_logger
 
 from . import config
 
 @dataclass
 class TranscribeJob:
-	user_id: str
-	capture_ts: float
+	id: str
 	pcm16: bytes  # 16kHz mono little-endian
 
 TARGET_SR = 16000  # expected incoming sample rate
@@ -29,46 +29,64 @@ class TranscriberLike(Protocol):
 # New lightweight result returned from the transcriber; not tied to Pydantic models
 @dataclass
 class TranscriptionResult:
-	user_id: str
+	id: str
 	text: str
 	# capture_ts and duration omitted intentionally — reconstruction happens upstream if needed
 
 
 class AsyncWhisperTranscriber:
-	def __init__(self, emit_cb: Optional[Callable[[TranscriptionResult], Awaitable[None]]] = None):
+	@dataclass(frozen=True)
+	class WhisperRuntimeCfg:
+		device: str
+		model: str
+		logprob_threshold: float
+		no_speech_threshold: float
+		prompt: str
+
+	def __init__(self, cfg: 'AsyncWhisperTranscriber.WhisperRuntimeCfg', emit_cb: Optional[Callable[[TranscriptionResult], Awaitable[None]]] = None):
 		self.emit_cb = emit_cb
 		self.queue: asyncio.Queue[TranscribeJob] = asyncio.Queue(maxsize=64)
 		self._task: Optional[asyncio.Task] = None
 		self._pipe = None
 		self._processor = None
 		self._prompt_ids = None
-		self._config = config.load_app_config()
+		self._cfg = cfg
+		self._dbg = make_debug_logger('transcriber')
+		self._on_fatal: Optional[Callable[[BaseException], None]] = None
 
 	def set_emit_callback(self, cb: Callable[[TranscriptionResult], Awaitable[None]]):
 		self.emit_cb = cb
+
+	def set_on_fatal(self, cb: Callable[[BaseException], None]):
+		"""Register a callback invoked when the transcriber encounters a fatal error.
+
+		The callback runs in the event loop thread before the exception is re-raised
+		to fail the internal task. Use this to trigger shutdown at the application level.
+		"""
+		self._on_fatal = cb
 
 	async def start(self):
 		if self._task:
 			return
 		# Lazy load model in executor to avoid blocking loop
 		loop = asyncio.get_running_loop()
+		resolved = resolve_device(self._cfg.device)
+		dev_arg = resolved.pipeline_index
 		def load_pipe():
-			# Device selection now handled internally (env: DEVICE) unless explicitly passed
-			resolved = resolve_device(self._config.device)
-			dev_arg = resolved.pipeline_index
-			proc = WhisperProcessor.from_pretrained(self._config.whisper.model)
+			proc = WhisperProcessor.from_pretrained(self._cfg.model)
 			self._processor = proc
 			return pipeline(
 				task='automatic-speech-recognition',
-				model=self._config.whisper.model,
+				model=self._cfg.model,
 				device=dev_arg,
 			)
 		self._pipe = await loop.run_in_executor(None, load_pipe)
-		# Precompute prompt_ids once if prompt configured. Let failures surface.
-		app_cfg = config.load_app_config()
-		prompt_text = app_cfg.whisper.prompt
+		# Precompute prompt_ids once if prompt configured
+		prompt_text = self._cfg.prompt
 		if prompt_text and self._processor:
-			self._prompt_ids = self._processor.get_prompt_ids(prompt_text, return_tensors="pt")
+			self._prompt_ids = self._processor\
+				.get_prompt_ids(prompt_text, return_tensors="pt")\
+				.to(dev_arg)
 
 		self._task = asyncio.create_task(self._run(), name='whisper-transcriber')
 
@@ -78,19 +96,16 @@ class AsyncWhisperTranscriber:
 			try:
 				await self._task
 			except asyncio.CancelledError:
+				# Normal shutdown path
 				pass
 			self._task = None
 
 	async def submit(self, job: TranscribeJob):
+		# Drop incoming job when queue is full, with a debug message
 		try:
 			self.queue.put_nowait(job)
 		except asyncio.QueueFull:
-			# Drop oldest to make room
-			try:
-				_ = self.queue.get_nowait()
-			except Exception:
-				pass
-			await self.queue.put(job)
+			self._dbg(f"dropping transcribe job id={job.id} - queue full ({self.queue.qsize()}/{self.queue.maxsize})")
 
 	async def _run(self):
 		while True:
@@ -98,18 +113,16 @@ class AsyncWhisperTranscriber:
 			try:
 				# Convert bytes to float32 numpy in -1..1 range
 				if not job.pcm16:
-					return
+					raise ValueError("TranscribeJob.pcm16 is empty")
 				audio_np = np.frombuffer(job.pcm16, dtype='<i2').astype('float32') / 32768.0
 				if audio_np.size == 0:
-					return
-
-				# Build generation kwargs approximating legacy thresholds
-				app_cfg = config.load_app_config()
-				whisper_cfg = app_cfg.whisper
+					raise ValueError("Decoded audio array is empty")
+				# Build generation kwargs from provided cfg
+				whisper_cfg = self._cfg
 				generate_kwargs = {
 					'temperature': (0.0, 0.1, 0.25, 0.5),
-					'logprob_threshold': whisper_cfg.logprob_threshold,
-					'no_speech_threshold': whisper_cfg.no_speech_threshold,
+					'logprob_threshold': float(whisper_cfg.logprob_threshold),
+					'no_speech_threshold': float(whisper_cfg.no_speech_threshold),
 					'condition_on_prev_tokens': True,
 					'compression_ratio_threshold': 1.35,
 					'forced_decoder_ids': None,
@@ -118,9 +131,8 @@ class AsyncWhisperTranscriber:
 				if self._prompt_ids is not None:
 					generate_kwargs['prompt_ids'] = self._prompt_ids
 					generate_kwargs['prompt_condition_type'] = 'first-segment'
-
 				# Force english if model isn't .en variant like legacy
-				model_name_lower = self._config.whisper.model.lower()
+				model_name_lower = self._cfg.model.lower()
 				if not model_name_lower.endswith('.en'):
 					generate_kwargs['language'] = 'english'
 					generate_kwargs['task'] = 'transcribe'
@@ -129,16 +141,16 @@ class AsyncWhisperTranscriber:
 				loop = asyncio.get_running_loop()
 				def infer():
 					if self._pipe is None:
-						return None
+						raise RuntimeError("Transcriber pipeline is not initialized")
+					# TODO: Use model.generate() instead of pipeline for more control and to handle deprecated pipe args.
 					return self._pipe(
 						audio_np,
-						return_timestamps=False,
+						return_timestamps=True,
 						generate_kwargs=generate_kwargs,
-						chunk_length_s=30,
 					)
 				result = await loop.run_in_executor(None, infer)
 				if not result:
-					return
+					raise RuntimeError("ASR pipeline returned no result")
 				# HF pipeline may return dict or list with segments; normalize
 				if isinstance(result, list):
 					# take concatenated text fields
@@ -150,10 +162,20 @@ class AsyncWhisperTranscriber:
 					text = ''
 				if text:
 					seg = TranscriptionResult(
-						user_id=job.user_id,
+						id=job.id,
 						text=text,
 					)
 					if self.emit_cb:
 						await self.emit_cb(seg)
+			except Exception as e:
+				self._dbg(f"transcribe job id={getattr(job, 'id', '?')} failed: {e}")
+				# Notify application-level handler before propagating
+				cb = self._on_fatal
+				if cb is not None:
+					try:
+						cb(e)
+					except Exception:
+						pass
+				raise
 			finally:
 				self.queue.task_done()

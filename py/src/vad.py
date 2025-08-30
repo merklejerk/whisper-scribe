@@ -46,7 +46,6 @@ class SileroVAD:
     def analyze(
         self,
         pcm16: np.ndarray,
-        sample_rate: int,
         window_s: float,
         threshold: float,
         *,
@@ -73,8 +72,7 @@ class SileroVAD:
         if pcm16.size == 0:
             # no frames -> tail window will be insufficient
             raise InsufficientSamplesError("insufficient samples for one 32 ms frame")
-        if sample_rate != SAMPLE_RATE:
-            raise ValueError(f"sample_rate must be {SAMPLE_RATE}, got {sample_rate}")
+        # Silero operates at 16 kHz with fixed 32 ms frames; caller must supply 16 kHz PCM16.
 
         norm = pcm16.astype(np.float32) / 32768.0
         n_frames_total = norm.shape[0] // FRAME_SAMPLES

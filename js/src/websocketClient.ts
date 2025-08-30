@@ -52,7 +52,7 @@ export class PythonWsClient {
 		});
 		this.ws.on('message', (data) => {
 			const parsed = JSON.parse(data.toString());
-			debug('Received raw message from WebSocket:', parsed);
+			debug(`Received raw ${parsed?.type} message from WebSocket`);
 			const validated = inboundSchema.safeParse(parsed);
 			if (!validated.success) {
 				debug('Invalid message received, validation failed:', validated.error);

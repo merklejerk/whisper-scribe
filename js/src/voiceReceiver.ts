@@ -4,9 +4,9 @@ import {
 	VoiceConnectionStatus,
 	entersState,
 } from '@discordjs/voice';
-import { Client } from 'discord.js';
 import prism from 'prism-media';
 import { resampleLinear, downmixToMono, nowEpoch } from './audioUtils.js';
+import { UserDirectory } from './userDirectory.js';
 
 // Discord supplies Opus packets; we use the @discordjs/voice receiver which gives us PCM 16-bit LE stereo 48kHz frames.
 // We aggregate per-user frames into time-based chunks and invoke a callback with internal VoiceChunk objects.
@@ -14,17 +14,18 @@ import { resampleLinear, downmixToMono, nowEpoch } from './audioUtils.js';
 export interface VoiceReceiverOptions {
 	targetSampleRate: number; // e.g. 16000
 	chunkMs: number; // aggregation window
-	maxBufferedChunks?: number; // backpressure guard (# of chunks not yet flushed upstream)
 }
 
 export interface VoiceChunk {
-	user_id: string;
+	userId: string;
 	index: number;
-	pcm_format: { sr: number; channels: number; sample_width: number };
-	started_ts: number;
-	capture_ts: number;
-	duration_ms: number;
+	pcmFormat: { sampleRate: number; channels: number; sampleWidth: number };
+	startedTs: number;
+	captureTs: number;
+	durationMs: number;
 	pcm16: Int16Array; // raw PCM samples at target SR, mono, 16-bit
+	// Optional display name captured near the time of utterance
+	displayName?: string;
 }
 
 interface UserBuf {
@@ -36,11 +37,26 @@ interface UserBuf {
 
 export class PerUserVoiceChunker {
 	private users = new Map<string, UserBuf>();
-	// sessionId previously set via setter; now fixed at construction to avoid temporal coupling
+	private speakerCache = new Map<string, string>();
+
 	constructor(
 		private opts: VoiceReceiverOptions,
 		private send: (chunk: VoiceChunk) => void,
+		private userDirectory: UserDirectory,
+		private guildId?: string,
 	) {}
+
+	// Hint that a user started speaking; we'll try to resolve their display name and cache it.
+	hintSpeaker(userId: string) {
+		if (this.speakerCache.has(userId)) return;
+		const name = this.userDirectory?.getDisplayNameSync(userId, this.guildId);
+		if (name) this.speakerCache.set(userId, name);
+		else
+			void this.userDirectory?.ensureDisplayName(userId, this.guildId).then(() => {
+				const n = this.userDirectory?.getDisplayNameSync(userId, this.guildId);
+				if (n) this.speakerCache.set(userId, n);
+			});
+	}
 
 	pushStereo48(userId: string, pcmStereo48: Int16Array) {
 		// Convert: stereo 48k -> mono -> resample to target SR
@@ -69,13 +85,14 @@ export class PerUserVoiceChunker {
 		const data = concatInt16(state.samples, state.total);
 		const durationMs = Math.round((state.total * 1000) / this.opts.targetSampleRate);
 		const chunk: VoiceChunk = {
-			user_id: userId,
+			userId,
 			index: state.nextIndex++,
-			pcm_format: { sr: this.opts.targetSampleRate, channels: 1, sample_width: 2 },
-			started_ts: state.startedTs!,
-			capture_ts: nowEpoch(),
-			duration_ms: durationMs,
+			pcmFormat: { sampleRate: this.opts.targetSampleRate, channels: 1, sampleWidth: 2 },
+			startedTs: state.startedTs!,
+			captureTs: nowEpoch(),
+			durationMs: durationMs,
 			pcm16: data,
+			displayName: this.speakerCache.get(userId),
 		};
 		state.samples = [];
 		state.total = 0;
@@ -96,7 +113,6 @@ function concatInt16(chunks: Int16Array[], total: number) {
 
 // Attach per-user opus decoding + chunk aggregation. Returns a disposer.
 export async function attachVoiceReceiver(
-	client: Client,
 	connection: VoiceConnection,
 	chunker: PerUserVoiceChunker,
 ) {
@@ -108,6 +124,8 @@ export async function attachVoiceReceiver(
 
 	speaking.on('start', (userId: string) => {
 		if (activeDecoders.has(userId)) return;
+		// Hint the chunker to resolve and cache the name for this user
+		chunker.hintSpeaker(userId);
 		const opusStream = connection.receiver.subscribe(userId, {
 			end: { behavior: EndBehaviorType.AfterSilence, duration: 250 },
 		});

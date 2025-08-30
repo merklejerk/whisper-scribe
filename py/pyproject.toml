@@ -25,6 +25,8 @@ dependencies = [
 
 [dependency-groups]
 debug = [
+	"pytest>=8.4.1",
+	"pytest-asyncio>=1.1.0",
 	"sounddevice (>=0.5.1,<0.6.0)",
 	"soundfile (>=0.13.1,<0.14.0)",
 ]
@@ -48,3 +50,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+	"real: runs a real model inference; requires REAL_STT_AUDIO env var",
+]
+addopts = "-m 'not real'"

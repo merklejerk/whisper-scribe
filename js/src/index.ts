@@ -30,54 +30,63 @@ async function showLog(sessionName: string) {
 }
 
 async function main() {
-	const argv = yargs(hideBin(process.argv))
-		.command('bot <voice>', 'Run Discord STT bot', (yargs) => {
-			return yargs
-				.positional('voice', {
-					describe: 'Voice channel ID to join',
+	yargs(hideBin(process.argv))
+		.command(
+			'bot <voice-channel-id>',
+			'Run Discord STT bot',
+			(yargs) => {
+				return yargs
+					.positional('voice-channel-id', {
+						describe: 'Voice channel ID to join',
+						type: 'string',
+						demandOption: true,
+					})
+					.option('ai-service-url', {
+						alias: 'a',
+						type: 'string',
+						describe: 'AI service URL',
+					})
+					.option('session-name', {
+						alias: 's',
+						type: 'string',
+						describe: 'Session name for logging',
+					})
+					.option('allowed-commanders', {
+						alias: 'c',
+						type: 'array',
+						string: true,
+						describe: 'List of user IDs or tags allowed to run commands',
+					});
+			},
+			async (argv) => {
+				await runBot({
+					voiceChannelId: argv.voiceChannelId,
+					aiServiceUrl: argv.aiServiceUrl,
+					sessionName: argv.sessionName,
+					allowedCommanders: argv.allowedCommanders,
+				});
+			},
+		)
+		.command(
+			'log',
+			'Print formatted log for a session',
+			(yargs) => {
+				return yargs.positional('session', {
+					describe: 'Session name to display log for',
 					type: 'string',
 					demandOption: true,
-				})
-				.option('ai-service-url', {
-					alias: 'a',
-					type: 'string',
-					describe: 'AI service URL',
-				})
-				.option('session-name', {
-					alias: 's',
-					type: 'string',
-					describe: 'Session name for logging',
-				})
-				.option('allowed-commanders', {
-					alias: 'a',
-					type: 'array',
-					describe: 'User IDs or tags allowed to run commands (repeatable)',
 				});
-		})
-		.command('log <session>', 'Print formatted log for a session', (yargs) => {
-			return yargs.positional('session', {
-				describe: 'Session name to display log for',
-				type: 'string',
-				demandOption: true,
-			});
-		})
-		.demandCommand(1, 'You must specify a command')
+			},
+			async (argv) => {
+				await showLog(argv.session);
+			},
+		)
+		.demandCommand(1, 'You need at least one command before moving on')
 		.help()
-		.parseSync();
-
-	const command = argv._[0];
-
-	if (command === 'bot') {
-		await runBot(argv);
-	} else if (command === 'log') {
-		await showLog(argv.session as string);
-	} else {
-		console.error(`Unknown command: ${command}`);
-		process.exit(1);
-	}
+		.alias('help', 'h').argv;
 }
 
-main().catch((err) => {
-	console.error('Application error:', err);
+main().catch((e) => {
+	console.error('Application error:', e);
 	process.exit(1);
 });

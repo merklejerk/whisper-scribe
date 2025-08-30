@@ -35,8 +35,12 @@ NodeToPy = Union[AudioChunkMessage, SummarizeRequestMessage]
 # Python -> Node messages
 class TranscriptionMessage(BaseMessage):
 	type: Literal['transcription'] = 'transcription'
+	# Correlation id for the transcription job (opaque to clients)
 	user_id: str
 	text: str
+	# Optional metadata carried from input chunks/segment
+	capture_ts: float
+	end_ts: float
 
 class SummarizeResponseMessage(BaseMessage):
 	type: Literal['summarize.response'] = 'summarize.response'

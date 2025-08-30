@@ -6,22 +6,41 @@ import base64
 import signal
 import websockets
 from websockets.legacy.server import WebSocketServerProtocol
-from typing import Dict
+import time
+import contextlib
+import uuid
+from typing import Dict, Optional
+from dataclasses import dataclass
 from pydantic import ValidationError
+import numpy as np
 from . import messages
 from .config import load_app_config
 from .transcriber import AsyncWhisperTranscriber, TranscribeJob, TranscriptionResult
 from .segmenter import PerUserSegmenter, SpeechSegment
 from .wrapup import generate_transcript, generate_outline
-from .audio import normalize_to_mono16k
+from .audio import normalize_to_mono16k, enhance_speech, TARGET_SR
 
 class WsServer:
 	def __init__(self):
 		self.loop = asyncio.get_event_loop()
-		self.transcriber = AsyncWhisperTranscriber()
+		# Load global config once and refine per component
+		app_cfg = load_app_config()
+		whisper_cfg = AsyncWhisperTranscriber.WhisperRuntimeCfg(
+			device=app_cfg.device,
+			model=app_cfg.whisper.model,
+			logprob_threshold=app_cfg.whisper.logprob_threshold,
+			no_speech_threshold=app_cfg.whisper.no_speech_threshold,
+			prompt=app_cfg.whisper.prompt,
+		)
+		self.transcriber = AsyncWhisperTranscriber(whisper_cfg)
 		self.clients: set[WebSocketServerProtocol] = set()
 		self.segmenters: Dict[str, PerUserSegmenter] = {}
+		# Correlation metadata for in-flight transcription jobs
+		self._job_meta: Dict[str, JobMeta] = {}
 		self._stopping = False
+		self._flusher_task: asyncio.Task | None = None
+		# Flusher wake-up event (nudge on new chunks)
+		self._flush_nudge: asyncio.Event = asyncio.Event()
 
 	async def emit(self, msg: messages.Outgoing):
 		data = msg.model_dump()
@@ -37,11 +56,17 @@ class WsServer:
 
 	async def handle_transcription_segment(self, segment: TranscriptionResult):
 		"""Callback for when the transcriber finishes a segment."""
+		meta = self._job_meta.pop(segment.id, None)
+		if meta is None:
+			# Required correlation metadata missing: fail fast (internal consistency error)
+			raise KeyError(f"Missing job metadata for transcription id={segment.id}")
 		msg = messages.TranscriptionMessage(
 			v=1,
 			type='transcription',
-			user_id=segment.user_id,
+			user_id=meta.user_id,
 			text=segment.text,
+			capture_ts=float(meta.capture_ts),
+			end_ts=float(meta.end_ts),
 		)
 		await self.emit(msg)
 
@@ -67,7 +92,13 @@ class WsServer:
 
 			user_key = msg.user_id
 			if user_key not in self.segmenters:
-				self.segmenters[user_key] = PerUserSegmenter(user_id=msg.user_id)
+				cfg = load_app_config()
+				self.segmenters[user_key] = PerUserSegmenter(
+					user_id=msg.user_id,
+					silence_gap_s=cfg.voice.silence_threshold_seconds,
+					vad_threshold=cfg.voice.vad_threshold,
+					max_segment_s=max(1.0, float(cfg.voice.max_speech_buf_seconds) or 60.0),
+				)
 
 			segmenter = self.segmenters[user_key]
 			fmt = msg.pcm_format
@@ -82,10 +113,10 @@ class WsServer:
 				await self._emit_error('bad_audio_format', str(e))
 				return
 
-			segments: list[SpeechSegment] = segmenter.feed(pcm16, msg.capture_ts)
-			for seg in segments:
-				job = TranscribeJob(user_id=msg.user_id, capture_ts=seg.start_ts, pcm16=seg.pcm16)
-				await self.transcriber.submit(job)
+			# Queue chunk; flusher will process and submit
+			segmenter.feed(pcm16, msg.capture_ts)
+			# Nudge flusher so inactivity-based finalization runs promptly
+			self._flush_nudge.set()
 
 		elif msg_type == 'summarize.request':
 			try:
@@ -145,20 +176,78 @@ class WsServer:
 				print(f"WS server listening on ws://{host}:{port}")
 				# Start transcriber after successful bind
 				self.transcriber.set_emit_callback(self.handle_transcription_segment)
+				# If the transcriber encounters a fatal error, halt the server by setting the stop future's exception
+				def _fatal_handler(exc: BaseException):
+					if not stop_future.done():
+						stop_future.set_exception(exc)
+				self.transcriber.set_on_fatal(_fatal_handler)
 				transcriber_started = False
 				try:
 					await self.transcriber.start()
 					transcriber_started = True
+					# Start periodic flusher to finalize segments on inactivity
+					self._flusher_task = asyncio.create_task(self._run_flusher(stop_future), name="segmenter-flusher")
+					# Fail-fast: if the flusher task crashes, propagate its exception to stop the server
+					def _flusher_done(task: asyncio.Task):
+						if task.cancelled():
+							return
+						exc = task.exception()
+						if exc and not stop_future.done():
+							stop_future.set_exception(exc)
+					self._flusher_task.add_done_callback(_flusher_done)
 					await stop_future
 				finally:
 					self._stopping = True
 					if transcriber_started:
 						await self.transcriber.stop()
+					if self._flusher_task is not None:
+						self._flusher_task.cancel()
+						with contextlib.suppress(asyncio.CancelledError):
+							await self._flusher_task
 					await asyncio.gather(*[c.close() for c in list(self.clients)], return_exceptions=True)
 					print("Shutdown complete.")
 		except OSError as e:
 			# Bind failed (address in use or permission denied). Avoid loading model.
 			print(f"Failed to bind ws://{host}:{port}: {e}")
+
+	async def _run_flusher(self, stop_future: asyncio.Future):
+		"""Submit segments in one place, driven by collect_ready.
+
+		Wakes on either a fixed interval (250 ms) or an explicit nudge when new
+		audio arrives. PerUserSegmenter manages ready segments; collect_ready returns them.
+		"""
+		interval = 0.25
+		while not stop_future.done():
+			# Wait for either a nudge or the interval to elapse
+			try:
+				await asyncio.wait_for(self._flush_nudge.wait(), timeout=interval)
+			except asyncio.TimeoutError:
+				pass
+			self._flush_nudge.clear()
+
+			now = time.time()
+			# Process pending audio and finalize segments; drains ready queue
+			for user_id, seg in list(self.segmenters.items()):
+				segments = seg.collect_ready(now)
+				for s in segments:
+					# Create a correlation id and store metadata for the outgoing message
+					job_id = uuid.uuid4().hex
+					self._job_meta[job_id] = JobMeta(user_id=user_id, capture_ts=s.start_ts, end_ts=s.end_ts)
+					
+					# Enhance audio before submitting
+					audio_float32 = np.frombuffer(s.pcm16, dtype='<i2').astype('float32') / 32768.0
+					enhanced_float32 = enhance_speech(audio_float32, TARGET_SR)
+					enhanced_pcm16 = (enhanced_float32 * 32767.0).astype('<i2').tobytes()
+
+					job = TranscribeJob(id=job_id, pcm16=enhanced_pcm16)
+					await self.transcriber.submit(job)
+
+# Typed job metadata for correlation and timestamps
+@dataclass
+class JobMeta:
+	user_id: str
+	capture_ts: float
+	end_ts: float
 
 def main():
 	async def _main():

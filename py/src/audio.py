@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import base64
 import math
-from typing import Tuple
+from typing import Tuple, cast
 
 import numpy as np
-from scipy.signal import resample_poly
+from scipy.signal import butter, lfilter, resample_poly
 
 TARGET_SR = 16000
 
@@ -73,3 +73,46 @@ def normalize_to_mono16k(data: bytes, sr: int, channels: int, sample_width: int)
     y = np.clip(x, -1.0, 1.0)
     pcm16 = (y * 32768.0).astype('<i2', copy=False).tobytes()
     return pcm16
+
+
+def bandpass_filter(
+    signal: np.ndarray,
+    sr: int,
+    lowcut: float = 250.0,
+    highcut: float = 3300.0,
+    order: int = 5
+) -> np.ndarray:
+    nyq = 0.5 * sr
+    low = lowcut / nyq
+    high = highcut / nyq
+    # Explicitly cast the return of butter to a (b,a) tuple to satisfy type checker
+    ba = cast(Tuple[np.ndarray, np.ndarray], butter(order, [low, high], btype="band", output='ba'))
+    b, a = ba
+    # Ensure result is a float32 numpy array
+    out = lfilter(b, a, signal)
+    return np.asarray(out, dtype=np.float32, order='C')
+
+
+def pre_emphasis(signal: np.ndarray, coeff: float = 0.97) -> np.ndarray:
+    if signal.size == 0:
+        return signal
+    return np.append(signal[0], signal[1:] - coeff * signal[:-1])
+
+
+def rms_normalize(signal: np.ndarray, target_db: float = -20.0) -> np.ndarray:
+    rms = np.sqrt(np.mean(signal**2))
+    if rms == 0:
+        return signal.copy()  # silent
+    target_rms = 10 ** (target_db / 20.0)
+    return signal * (target_rms / rms)
+
+
+def enhance_speech(audio: np.ndarray, sr: int) -> np.ndarray:
+    """Applies a series of filters to enhance speech quality."""
+    return rms_normalize(
+        bandpass_filter(
+            pre_emphasis(audio, 0.8),
+            sr,
+            order=3
+        ),
+    ).clip(-1.0, 1.0)

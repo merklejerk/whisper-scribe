@@ -2,14 +2,12 @@ import fs from 'fs';
 import path from 'path';
 
 export interface JsonlLogEntry {
-	user_id: string;
-	user_name: string;
-	start_ts: number; // epoch seconds
-	end_ts?: number;
+	userId: string;
+	displayName: string;
+	startTs: number;
+	endTs: number;
+	origin: 'voice' | 'text';
 	text: string;
-	// allow extras without enforcing a schema here
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	[k: string]: any;
 }
 
 /**
@@ -54,10 +52,10 @@ export async function readLogEntriesStrict(filePath: string): Promise<JsonlLogEn
 export function formatLogLines(entries: JsonlLogEntry[]): string {
 	return entries
 		.map((entry) => {
-			const ts = new Date(entry.start_ts * 1000).toLocaleTimeString('en-US', {
+			const ts = new Date(entry.startTs * 1000).toLocaleTimeString('en-US', {
 				hour12: false,
 			});
-			return `[${ts}] ${entry.user_name}: ${entry.text}`;
+			return `[${ts}] ${entry.displayName}: ${entry.text}`;
 		})
 		.join('\n');
 }

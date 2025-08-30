@@ -7,25 +7,26 @@ import {
 } from '@discordjs/voice';
 import { loadConfig, newSessionId } from './config.js';
 import { Session } from './session.js';
+import { UserDirectory } from './userDirectory.js';
 import { attachVoiceReceiver } from './voiceReceiver.js';
 import { debug } from './debug.js';
 
-export async function runBot(argv: any) {
-	// First positional arg is the required voice channel id
-	const voicePos = argv.voice;
+export interface RunBotOptions {
+	voiceChannelId?: string;
+	aiServiceUrl?: string;
+	sessionName?: string;
+	allowedCommanders?: string[];
+}
 
-	let allowedCommanders: string[] | undefined;
-	if (argv['allowed-commanders']) {
-		const raw = argv['allowed-commanders'] as unknown as Array<unknown>;
-		allowedCommanders = raw.map((x) => String(x).trim());
-	} else {
-		allowedCommanders = undefined;
-	}
+export async function runBot(opts: RunBotOptions) {
+	// First positional arg is the required voice channel id
+
+	const allowedCommanders = opts.allowedCommanders;
 
 	const cfg = loadConfig({
-		voice: voicePos,
-		aiServiceUrl: argv['ai-service-url'],
-		sessionName: argv['session-name'],
+		voice: opts.voiceChannelId,
+		aiServiceUrl: opts.aiServiceUrl,
+		sessionName: opts.sessionName,
 		allowedCommanders,
 	});
 	debug('Configuration loaded:', cfg);
@@ -66,12 +67,15 @@ export async function runBot(argv: any) {
 			activeGuildId = voiceChannel.guild.id;
 
 			const sessionId = cfg.sessionName || newSessionId();
+			const userDirectory = new UserDirectory(client);
 			session = new Session({
 				sessionId,
+				guildId: voiceChannel.guild.id,
 				voiceChannelId: voiceChannel.id,
 				startTimestamp: Date.now() / 1000,
 				sessionName: cfg.sessionName || sessionId,
 				aiServiceUrl: cfg.aiServiceUrl,
+				userDirectory,
 			});
 
 			const connection = joinVoiceChannel({
@@ -112,7 +116,7 @@ export async function runBot(argv: any) {
 				}
 			});
 
-			await attachVoiceReceiver(client, connection, session.getChunker());
+			await attachVoiceReceiver(connection, session.getChunker());
 			session.start();
 			console.log(`Successfully joined voice channel: ${voiceChannel.name}`);
 			debug('Session started and voice receiver attached.');
@@ -123,15 +127,28 @@ export async function runBot(argv: any) {
 	});
 
 	client.on(Events.MessageCreate, async (message) => {
-		if (message.author.bot || !session) {
+		if (message.author.bot || !session || message.channel.id !== cfg.voiceChannelId) {
 			return;
 		}
 		const contentPreview =
-			message.content.length > 50 ? `${message.content.substring(0, 50)}...` : message.content;
+			message.content.length > 50
+				? `${message.content.substring(0, 50)}...`
+				: message.content;
 		debug(`Message received from ${message.author.tag}: "${contentPreview}"`);
 
-		const command = message.content.trim();
+		const content = message.content.trim();
+
+		// If it's not a command, treat it as a text message to be logged
+		if (!content.startsWith('!')) {
+			await session.logTextMessage(message);
+			return; // Done with this message
+		}
+
+		// It's a command, check if it's one we know
+		const command = content;
 		if (command !== '!wrapup' && command !== '!log') {
+			// Unknown command, ignore it
+			debug(`Ignoring unknown command: ${command}`);
 			return;
 		}
 
@@ -145,9 +162,6 @@ export async function runBot(argv: any) {
 				debug(
 					`User ${authorTag} (${authorId}) is not in the allowed list. Ignoring command.`,
 				);
-				console.log(
-					`User ${authorTag} (${authorId}) attempted to run ${command} but is not permitted.`,
-				);
 				try {
 					await message.reply('You are not authorized to run this command.');
 				} catch (e) {
@@ -155,31 +169,15 @@ export async function runBot(argv: any) {
 				}
 				return;
 			}
-			debug(`User ${authorTag} (${authorId}) is authorized.`);
 		}
 
 		try {
-			const voiceChannel = await client.channels.fetch(session.getVoiceChannelId());
-			if (!voiceChannel || !voiceChannel.isVoiceBased()) {
-				return; // Should not happen if session is active
-			}
-			debug(`Command invoked in channel: ${message.channel.id}, voice channel: ${voiceChannel.id}`);
-
-			if (
-				message.channel.type === ChannelType.GuildText &&
-				message.channel.name === voiceChannel.name
-			) {
-				if (command === '!wrapup') {
-					console.log(
-						`Wrapup command received from ${message.author.tag} in #${message.channel.name}`,
-					);
-					await session.handleWrapup(message);
-				} else if (command === '!log') {
-					console.log(
-						`Log command received from ${message.author.tag} in #${message.channel.name}`,
-					);
-					await session.handleLogCommand(message);
-				}
+			if (command === '!wrapup') {
+				console.log(`Wrapup command received from ${message.author.tag}`);
+				await session.handleWrapup(message);
+			} else if (command === '!log') {
+				console.log(`Log command received from ${message.author.tag}`);
+				await session.handleLogCommand(message);
 			}
 		} catch (e) {
 			console.error(`Error processing ${command} command:`, e);
