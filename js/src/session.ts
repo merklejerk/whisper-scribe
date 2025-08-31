@@ -1,8 +1,9 @@
 import {
 	AudioChunkMessage,
-	SummarizeResponseMessage,
+	WrapupResponseMessage,
 	TranscriptionMessage,
 	WrapupRequestMessage,
+	ErrorMessage,
 } from './messages.js';
 import { PerUserVoiceChunker, VoiceChunk } from './voiceReceiver.js';
 import { UserDirectory } from './userDirectory.js';
@@ -20,10 +21,11 @@ export interface SessionConfig {
 	sessionId: string;
 	guildId?: string;
 	voiceChannelId: string;
-	startTimestamp: number; // epoch seconds (float)
 	sessionName: string;
 	aiServiceUrl: string;
 	userDirectory: UserDirectory;
+	logsPath: string;
+	wrapupsPath: string;
 }
 
 export class Session {
@@ -51,13 +53,15 @@ export class Session {
 		this.websocketClient = new PythonWsClient(sessionInfo.aiServiceUrl, (msg) => {
 			if (msg.type === 'transcription') {
 				this.handleTranscription(msg as TranscriptionMessage);
-			} else if (msg.type === 'summarize.response') {
-				this.handleSummarizeResponse(msg as SummarizeResponseMessage);
+			} else if (msg.type === 'error') {
+				this.handleErrorMessage(msg as ErrorMessage);
+			} else if (msg.type === 'wrapup.response') {
+				this.handleWrapupResponse(msg as WrapupResponseMessage);
 			}
 		});
 
 		// Ensure logs directory exists (project root /logs)
-		const logsDir = paths.resolveRoot('logs');
+		const logsDir = this.sessionInfo.logsPath;
 		paths.ensureDir(logsDir);
 		this.logFilePath = path.join(logsDir, `${this.sessionInfo.sessionId}.jsonl`);
 		this.logStream = fs.createWriteStream(this.logFilePath, { flags: 'a', encoding: 'utf8' });
@@ -162,17 +166,23 @@ export class Session {
 		}
 	};
 
+	private handleErrorMessage = async (err: ErrorMessage) => {
+		debug('Received error message from Python service:', err);
+	};
+
 	public handleWrapup = async (message: Message) => {
 		const requestId = message.id;
 		this.pendingWrapups.set(requestId, message);
 		debug(`Wrapup command handled. Request ID: ${requestId}`);
 
 		const entries = await this.readLogEntries();
+		// Use the timestamp of the first log entry if available; otherwise use current time
+		const startTs = entries && entries.length > 0 ? entries[0].startTs : Date.now() / 1000;
 		const wrapupReq: WrapupRequestMessage = {
 			v: 1,
-			type: 'summarize.request',
+			type: 'wrapup.request',
 			session_name: this.sessionInfo.sessionName,
-			start_ts: this.sessionInfo.startTimestamp,
+			start_ts: startTs,
 			log_entries: entries.map(toWrapupLogEntry),
 			request_id: requestId,
 		};
@@ -180,10 +190,10 @@ export class Session {
 		debug('Sent wrapup request to Python service.');
 	};
 
-	private handleSummarizeResponse = async (response: SummarizeResponseMessage) => {
+	private handleWrapupResponse = async (response: WrapupResponseMessage) => {
 		// Try to correlate using request_id if present
 		let message: Message | undefined;
-		debug('Received summarize response:', response);
+		debug('Received wrapup response:', response);
 		if ((response as any).request_id) {
 			message = this.pendingWrapups.get((response as any).request_id);
 			if (message) {
@@ -198,22 +208,22 @@ export class Session {
 			return;
 		}
 
-		const replyContent = `
-**Session Wrap-up for: ${this.sessionInfo.sessionName}**
-
-**Transcript:**
-\`\`\`
-${response.transcript}
-\`\`\`
-
-**Outline:**
-${response.outline}
-`;
-
+		// Write the raw outline unmodified to a markdown file and reply with the file attached.
 		try {
-			await message.reply(replyContent);
+			const wrapupsDir = this.sessionInfo.wrapupsPath;
+			paths.ensureDir(wrapupsDir);
+			const outPath = path.join(wrapupsDir, `${this.sessionInfo.sessionName}.md`);
+			// Write the outline exactly as received (no decoration)
+			fs.writeFileSync(outPath, response.outline, 'utf8');
+
+			const attachment = new AttachmentBuilder(Buffer.from(response.outline, 'utf-8'), {
+				name: `${this.sessionInfo.sessionName}.md`,
+			});
+
+			const replyContent = `Session wrap-up attached: ${this.sessionInfo.sessionName}`;
+			await message.reply({ content: replyContent, files: [attachment] });
 		} catch (e) {
-			console.error('Failed to send wrapup reply to Discord:', e);
+			console.error('Failed to send wrapup reply to Discord or write file:', e);
 		}
 	};
 

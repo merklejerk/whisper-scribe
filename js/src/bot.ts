@@ -12,7 +12,7 @@ import { attachVoiceReceiver } from './voiceReceiver.js';
 import { debug } from './debug.js';
 
 export interface RunBotOptions {
-	voiceChannelId?: string;
+	voiceChannelId: string;
 	aiServiceUrl?: string;
 	sessionName?: string;
 	allowedCommanders?: string[];
@@ -23,12 +23,14 @@ export async function runBot(opts: RunBotOptions) {
 
 	const allowedCommanders = opts.allowedCommanders;
 
+	// Load the main app config (does not require voice channel id)
 	const cfg = loadConfig({
-		voice: opts.voiceChannelId,
 		aiServiceUrl: opts.aiServiceUrl,
-		sessionName: opts.sessionName,
 		allowedCommanders,
 	});
+
+	// Voice channel id MUST be provided via CLI args
+	const voiceChannelId = opts.voiceChannelId;
 	debug('Configuration loaded:', cfg);
 	const client = new Client({
 		intents: [
@@ -46,19 +48,12 @@ export async function runBot(opts: RunBotOptions) {
 		console.log(`Logged in as ${client.user?.tag}`);
 		debug(`Client ready, user: ${client.user?.tag}`);
 
-		if (!cfg.voiceChannelId) {
-			console.error(
-				'Error: Voice channel ID is required. Please provide it via config file or --voice argument.',
-			);
-			process.exit(1);
-		}
-
 		try {
-			debug(`Attempting to fetch voice channel: ${cfg.voiceChannelId}`);
-			const voiceChannel = await client.channels.fetch(cfg.voiceChannelId);
+			debug(`Attempting to fetch voice channel: ${voiceChannelId}`);
+			const voiceChannel = await client.channels.fetch(voiceChannelId as string);
 			if (!voiceChannel || !voiceChannel.isVoiceBased()) {
 				console.error(
-					`Error: Channel ${cfg.voiceChannelId} is not a voice channel or could not be found.`,
+					`Error: Channel ${voiceChannelId} is not a voice channel or could not be found.`,
 				);
 				process.exit(1);
 			}
@@ -66,15 +61,16 @@ export async function runBot(opts: RunBotOptions) {
 
 			activeGuildId = voiceChannel.guild.id;
 
-			const sessionId = cfg.sessionName || newSessionId();
+			const sessionId = opts.sessionName || newSessionId();
 			const userDirectory = new UserDirectory(client);
 			session = new Session({
 				sessionId,
 				guildId: voiceChannel.guild.id,
 				voiceChannelId: voiceChannel.id,
-				startTimestamp: Date.now() / 1000,
-				sessionName: cfg.sessionName || sessionId,
+				sessionName: opts.sessionName || sessionId,
 				aiServiceUrl: cfg.aiServiceUrl,
+				logsPath: cfg.logsPath,
+				wrapupsPath: cfg.wrapupsPath,
 				userDirectory,
 			});
 
@@ -127,7 +123,7 @@ export async function runBot(opts: RunBotOptions) {
 	});
 
 	client.on(Events.MessageCreate, async (message) => {
-		if (message.author.bot || !session || message.channel.id !== cfg.voiceChannelId) {
+		if (message.author.bot || !session || message.channel.id !== voiceChannelId) {
 			return;
 		}
 		const contentPreview =

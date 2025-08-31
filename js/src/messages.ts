@@ -26,9 +26,8 @@ export interface TranscriptionMessage extends BaseMessage {
 	end_ts: number;
 }
 
-export interface SummarizeResponseMessage extends BaseMessage {
-	type: 'summarize.response';
-	transcript: string;
+export interface WrapupResponseMessage extends BaseMessage {
+	type: 'wrapup.response';
 	outline: string;
 	request_id: string;
 }
@@ -40,10 +39,10 @@ export interface ErrorMessage extends BaseMessage {
 	details?: any;
 }
 
-export type InboundFromPython = TranscriptionMessage | ErrorMessage | SummarizeResponseMessage;
+export type InboundFromPython = TranscriptionMessage | ErrorMessage | WrapupResponseMessage;
 
 export interface WrapupRequestMessage extends BaseMessage {
-	type: 'summarize.request';
+	type: 'wrapup.request';
 	session_name: string;
 	start_ts: number;
 	log_entries: WrapupLogEntry[];
@@ -82,9 +81,8 @@ export const transcriptionSchema = base.extend({
 	end_ts: z.number(),
 });
 
-export const summarizeResponseSchema = base.extend({
-	type: z.literal('summarize.response'),
-	transcript: z.string(),
+export const wrapupResponseSchema = base.extend({
+	type: z.literal('wrapup.response'),
 	outline: z.string(),
 	request_id: z.string(),
 });
@@ -96,4 +94,4 @@ export const errorSchema = base.extend({
 	details: z.any().optional(),
 });
 
-export const inboundSchema = z.union([transcriptionSchema, summarizeResponseSchema, errorSchema]);
+export const inboundSchema = z.union([transcriptionSchema, wrapupResponseSchema, errorSchema]);

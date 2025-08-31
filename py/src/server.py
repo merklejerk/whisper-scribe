@@ -16,8 +16,8 @@ import numpy as np
 from . import messages
 from .config import load_app_config
 from .transcriber import AsyncWhisperTranscriber, TranscribeJob, TranscriptionResult
-from .segmenter import PerUserSegmenter, SpeechSegment
-from .wrapup import generate_transcript, generate_outline
+from .segmenter import PerUserSegmenter
+from .wrapup import generate_transcript, GeminiWrapupGenerator, LLMRequestError
 from .audio import normalize_to_mono16k, enhance_speech, TARGET_SR
 
 class WsServer:
@@ -25,6 +25,8 @@ class WsServer:
 		self.loop = asyncio.get_event_loop()
 		# Load global config once and refine per component
 		app_cfg = load_app_config()
+		# Keep a reference to the loaded app config to avoid reloading
+		self.app_cfg = app_cfg
 		whisper_cfg = AsyncWhisperTranscriber.WhisperRuntimeCfg(
 			device=app_cfg.device,
 			model=app_cfg.whisper.model,
@@ -92,7 +94,7 @@ class WsServer:
 
 			user_key = msg.user_id
 			if user_key not in self.segmenters:
-				cfg = load_app_config()
+				cfg = self.app_cfg
 				self.segmenters[user_key] = PerUserSegmenter(
 					user_id=msg.user_id,
 					silence_gap_s=cfg.voice.silence_threshold_seconds,
@@ -118,22 +120,45 @@ class WsServer:
 			# Nudge flusher so inactivity-based finalization runs promptly
 			self._flush_nudge.set()
 
-		elif msg_type == 'summarize.request':
+		elif msg_type == 'wrapup.request':
 			try:
-				msg = messages.SummarizeRequestMessage(**obj)
+				msg = messages.WrapupRequestMessage(**obj)
 			except ValidationError as e:
-				await self._emit_error('bad_request', f'invalid summarize.request: {e}')
+				await self._emit_error('bad_request', f'invalid wrapup.request: {e}')
 				return
+			cfg = self.app_cfg
+			if cfg.gemini_api_key is None:
+				await self._emit_error('missing_api_key', 'Gemini API key is not configured')
+				return
+
 			transcript = generate_transcript(msg.log_entries, msg.session_name)
-			outline = generate_outline(msg.log_entries, msg.session_name)
-			response = messages.SummarizeResponseMessage(
-				v=1,
-				type='summarize.response',
-				transcript=transcript,
-				outline=outline,
-				request_id=msg.request_id,
+			# Use Gemini-based wrapup generator; pass configured API key
+			generator = GeminiWrapupGenerator(
+				cfg.gemini_api_key,
+				cfg.wrapup.model,
+				prompt=cfg.wrapup.prompt,
+				temperature=cfg.wrapup.temperature,
+				max_output_tokens=cfg.wrapup.max_output_tokens,
 			)
-			await self.emit(response)
+			try:
+				outline = await generator.generate(transcript, tips=list(cfg.wrapup.tips))
+			except LLMRequestError as e:
+				# Preserve the original error code/message in the WS error reply
+				code = str(e.code) if hasattr(e, 'code') else 'llm_error'
+				message = e.message if hasattr(e, 'message') else str(e)
+				await self._emit_error(code, message)
+				return
+			else:
+				# Ensure outline is a string for the response model
+				if outline is None:
+					outline = ""
+				response = messages.WrapupResponseMessage(
+					v=1,
+					type='wrapup.response',
+					outline=outline,
+					request_id=msg.request_id,
+				)
+				await self.emit(response)
 
 		else:
 			await self._emit_error('unknown_type', f"unknown message type: {msg_type!r}")

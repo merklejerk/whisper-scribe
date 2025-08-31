@@ -9,14 +9,19 @@ dotenv.config({ path: paths.resolveRoot('.env') });
 
 export interface AppConfig {
 	discordToken: string;
-	voiceChannelId?: string;
 	aiServiceUrl: string; // ws://host:port
-	sessionName: string;
 	chunkMs: number;
 	allowedCommanders: string[];
+	logsPath: string;
+	wrapupsPath: string;
 }
 
-function loadTomlConfig(): any | undefined {
+export interface ParsedArgs {
+	aiServiceUrl?: string;
+	allowedCommanders?: string[];
+}
+
+export function loadTomlConfig(): any | undefined {
 	const filePath = paths.resolveRoot('config.toml');
 	try {
 		const raw = fs.readFileSync(filePath, 'utf8');
@@ -32,14 +37,13 @@ function extractFromToml(t: any | undefined): Partial<AppConfig> {
 	const out: Partial<AppConfig> = {};
 	const discord = t.discord || {};
 	const net = t.net || {};
-	out.voiceChannelId = discord.voice_channel_id;
 	out.aiServiceUrl = net.ai_service_url;
 	out.chunkMs = net.chunk_ms;
 	out.allowedCommanders = discord.allowed_commanders;
 	return out;
 }
 
-export function loadConfig(parsed: { [key: string]: unknown }): AppConfig {
+export function loadConfig(parsed: ParsedArgs): AppConfig {
 	const fileCfg = extractFromToml(loadTomlConfig());
 	// Secrets only from environment variables.
 	const discordToken = process.env.DISCORD_TOKEN || '';
@@ -48,24 +52,20 @@ export function loadConfig(parsed: { [key: string]: unknown }): AppConfig {
 	}
 
 	// Precedence: CLI args > config.toml > defaults
-	// NOTE: voice channel must be provided via CLI (required) to avoid ambiguous config file usage.
-	const voiceChannelId = (parsed.voice as string | undefined) || undefined;
-	if (!voiceChannelId) {
-		throw new Error('Voice channel ID is required.');
-	}
+	// Precedence: CLI args > config.toml > defaults
 	const aiServiceUrl =
-		(parsed['aiServiceUrl'] as string | undefined) ||
+		(parsed.aiServiceUrl as string | undefined) ||
 		fileCfg.aiServiceUrl ||
 		'ws://localhost:8771';
-	const sessionName =
-		(parsed['sessionName'] as string | undefined) ||
-		fileCfg.sessionName ||
-		new Date().toISOString().replace(/[:.]/g, '-');
-	const chunkMs = (parsed['chunk-ms'] as number | undefined) || fileCfg.chunkMs || 1000;
+	const chunkMs = fileCfg.chunkMs || 1000;
 	const allowedCommanders =
 		(parsed.allowedCommanders as string[] | undefined) || fileCfg.allowedCommanders || [];
 
-	return { discordToken, voiceChannelId, aiServiceUrl, sessionName, chunkMs, allowedCommanders };
+	// Compute frequently-used absolute paths once
+	const logsPath = paths.resolveRoot('logs');
+	const wrapupsPath = paths.resolveRoot('wrapups');
+
+	return { discordToken, aiServiceUrl, chunkMs, allowedCommanders, logsPath, wrapupsPath };
 }
 
 export function newSessionId(): string {

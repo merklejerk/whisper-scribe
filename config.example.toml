@@ -35,10 +35,15 @@ max_speech_buf_seconds = 60
 
 # Configuration for generating outlines.
 [wrapup]
-# OpenAI model name
+# Gemini/OpenAI model name
 model = "gpt-4o-mini"
 # List of tips for the wrapup LLM.
 tips = []
+# System prompt used to generate session outlines. If empty, a sensible default is used.
+prompt = ""
+# Gemini generation params
+temperature = 0.05
+max_output_tokens = 10240
 
 # Mapping of usernames to aliases.
 [username_map]

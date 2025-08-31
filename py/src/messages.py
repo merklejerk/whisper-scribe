@@ -24,27 +24,32 @@ class AudioChunkMessage(BaseMessage):
 	capture_ts: float
 	data_b64: str
 
-class SummarizeRequestMessage(BaseMessage):
-	type: Literal['summarize.request'] = 'summarize.request'
+class WrapupLogEntry(BaseModel):
+	"""Wire shape sent by Node for wrapup logs."""
+	user_name: str
+	start_ts: float
+	end_ts: float
+	text: str
+	user_id: str
+
+class WrapupRequestMessage(BaseMessage):
+	type: Literal['wrapup.request'] = 'wrapup.request'
 	session_name: str
-	log_entries: List[Any]
+	log_entries: List[WrapupLogEntry]
 	request_id: str
 
-NodeToPy = Union[AudioChunkMessage, SummarizeRequestMessage]
+NodeToPy = Union[AudioChunkMessage, WrapupRequestMessage]
 
 # Python -> Node messages
 class TranscriptionMessage(BaseMessage):
 	type: Literal['transcription'] = 'transcription'
-	# Correlation id for the transcription job (opaque to clients)
 	user_id: str
 	text: str
-	# Optional metadata carried from input chunks/segment
 	capture_ts: float
 	end_ts: float
 
-class SummarizeResponseMessage(BaseMessage):
-	type: Literal['summarize.response'] = 'summarize.response'
-	transcript: str
+class WrapupResponseMessage(BaseMessage):
+	type: Literal['wrapup.response'] = 'wrapup.response'
 	outline: str
 	request_id: str
 
@@ -54,13 +59,7 @@ class ErrorMessage(BaseMessage):
 	message: str
 	details: Optional[str] = None
 
-PyToNode = Union[TranscriptionMessage, ErrorMessage, SummarizeResponseMessage]
+PyToNode = Union[TranscriptionMessage, ErrorMessage, WrapupResponseMessage]
 
 Incoming = NodeToPy
 Outgoing = PyToNode
-
-__all__ = [
-	'PROTO_VERSION','BaseMessage','PCMFormat','AudioChunkMessage',
-	'SummarizeRequestMessage', 'SummarizeResponseMessage',
-	'TranscriptionMessage','ErrorMessage','Incoming','Outgoing'
-]

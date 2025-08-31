@@ -35,6 +35,9 @@ class VoiceCfg:
 class WrapupCfg:
 	model: str = 'gpt-4o-mini'
 	tips: tuple[str, ...] = ()
+	prompt: str = ''
+	temperature: float = 0.05
+	max_output_tokens: int = 10240
 
 @dataclass(frozen=True)
 class RefinerCfg:
@@ -66,6 +69,7 @@ class AppConfig:
 	username_map: Dict[str, str]
 	phrase_map: Dict[str, str]
 	openai_api_key: Optional[str]
+	gemini_api_key: Optional[str]
 	device: str
 
 def _coerce_int_list(val) -> tuple[int, ...]:
@@ -110,6 +114,9 @@ def load_app_config() -> AppConfig:
 	wrapup_cfg = WrapupCfg(
 		model=wrapup.get('model', WrapupCfg.model),
 		tips=tuple(wrapup.get('tips', [])),
+		prompt=wrapup.get('prompt', WrapupCfg.prompt),
+		temperature=float(wrapup.get('temperature', WrapupCfg.temperature)),
+		max_output_tokens=int(wrapup.get('max_output_tokens', WrapupCfg.max_output_tokens)),
 	)
 	refiner_cfg = RefinerCfg(
 		model=refiner.get('model'),
@@ -137,7 +144,8 @@ def load_app_config() -> AppConfig:
 		refiner=refiner_cfg,
 		username_map=username_map,
 		phrase_map=phrase_map,
-	openai_api_key=os.getenv('OPENAI_API_KEY'),
+		openai_api_key=os.getenv('OPENAI_API_KEY'),
+		gemini_api_key=os.getenv('GEMINI_API_KEY'),
 	device=os.getenv('DEVICE', 'auto'),  # auto = choose best available (cuda/mps/rocm/cpu)
 	)
 
