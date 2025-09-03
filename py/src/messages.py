@@ -15,14 +15,16 @@ class PCMFormat(BaseModel):
 	channels: int
 	sample_width: int
 
-class AudioChunkMessage(BaseMessage):
-	type: Literal['audio.chunk'] = 'audio.chunk'
-	user_id: str
+class AudioSegmentMessage(BaseMessage):
+	type: Literal['audio.segment'] = 'audio.segment'
+	id: str
 	index: int
 	pcm_format: PCMFormat
 	started_ts: float
 	capture_ts: float
 	data_b64: str
+	# Optional per-job ASR prompt override (Whisper system prompt)
+	prompt: Optional[str] = None
 
 class WrapupLogEntry(BaseModel):
 	"""Wire shape sent by Node for wrapup logs."""
@@ -35,15 +37,19 @@ class WrapupLogEntry(BaseModel):
 class WrapupRequestMessage(BaseMessage):
 	type: Literal['wrapup.request'] = 'wrapup.request'
 	session_name: str
+	start_ts: float
 	log_entries: List[WrapupLogEntry]
 	request_id: str
+	# Optional wrapup prompt and tips supplied by caller
+	wrapup_prompt: Optional[str] = None
+	wrapup_tips: Optional[List[str]] = None
 
-NodeToPy = Union[AudioChunkMessage, WrapupRequestMessage]
+NodeToPy = Union[AudioSegmentMessage, WrapupRequestMessage]
 
 # Python -> Node messages
 class TranscriptionMessage(BaseMessage):
 	type: Literal['transcription'] = 'transcription'
-	user_id: str
+	id: str
 	text: str
 	capture_ts: float
 	end_ts: float

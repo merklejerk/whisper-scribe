@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import aiohttp
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 from .messages import WrapupLogEntry
 
 DEFAULT_PROMPT = r"""
@@ -19,10 +19,13 @@ Make sure your recap follows the order of events as they unfold in the transcrip
 Maintain a playful, engaging, and enthusiastic tone without being long-winded.
 """
 
-def generate_transcript(log_entries: List[WrapupLogEntry], session_name: str) -> str:
+def generate_transcript(
+	log_entries: List[WrapupLogEntry],
+	session_name: str,
+) -> str:
 	"""Formats session log entries into a plain text transcript file.
 
-	Accepts a list of `WrapupLogEntry` models (wire shape from JS).
+	Caller is responsible for applying any username/phrase mappings upstream.
 	"""
 	lines = [f"# Transcript for session: {session_name}\n"]
 	for entry in log_entries:

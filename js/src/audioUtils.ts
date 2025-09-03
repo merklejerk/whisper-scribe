@@ -49,3 +49,17 @@ export function nowIso(): string {
 export function nowEpoch(): number {
 	return Date.now() / 1000;
 }
+
+// Compute RMS in dBFS for a mono Int16 frame. Returns negative dB value (0 dBFS is full scale).
+export function rmsDbFs(frame: Int16Array): number {
+	if (frame.length === 0) return -Infinity;
+	let sumSq = 0;
+	// Use scalar loop to avoid creating a Float32Array; keep GC low on small frames
+	for (let i = 0; i < frame.length; i++) {
+		const v = frame[i] / 32768;
+		sumSq += v * v;
+	}
+	const rms = Math.sqrt(sumSq / frame.length);
+	const eps = 1e-9;
+	return 20 * Math.log10(Math.max(rms, eps));
+}

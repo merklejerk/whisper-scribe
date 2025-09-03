@@ -10,15 +10,28 @@ dotenv.config({ path: paths.resolveRoot('.env') });
 export interface AppConfig {
 	discordToken: string;
 	aiServiceUrl: string; // ws://host:port
-	chunkMs: number;
 	allowedCommanders: string[];
 	logsPath: string;
 	wrapupsPath: string;
+	profile?: string;
+	userIdMap?: Record<string, string>;
+	phraseMap?: Record<string, string>;
+	// Optional overrides derived from profile/base config
+	wrapupPrompt?: string;
+	wrapupTips?: string[];
+	asrPrompt?: string;
+	// Segmenter (VAD) options
+	vadDbThreshold?: number;
+	silenceGapMs?: number;
+	vadFrameMs?: number;
+	maxSegmentMs?: number;
+	minSegmentMs?: number;
 }
 
-export interface ParsedArgs {
+export interface CliArgs {
 	aiServiceUrl?: string;
 	allowedCommanders?: string[];
+	profile?: string;
 }
 
 export function loadTomlConfig(): any | undefined {
@@ -32,19 +45,53 @@ export function loadTomlConfig(): any | undefined {
 	}
 }
 
-function extractFromToml(t: any | undefined): Partial<AppConfig> {
+function extractFromToml(t: any | undefined, profile?: string): Partial<AppConfig> {
 	if (!t) return {};
 	const out: Partial<AppConfig> = {};
 	const discord = t.discord || {};
 	const net = t.net || {};
+	const voice = t.voice || {};
 	out.aiServiceUrl = net.ai_service_url;
-	out.chunkMs = net.chunk_ms;
 	out.allowedCommanders = discord.allowed_commanders;
+	// Voice/segmenter base options (not profile-overridable)
+	if (typeof voice.vad_db_threshold === 'number') out.vadDbThreshold = voice.vad_db_threshold;
+	if (typeof voice.silence_gap_ms === 'number') out.silenceGapMs = voice.silence_gap_ms;
+	if (typeof voice.vad_frame_ms === 'number') out.vadFrameMs = voice.vad_frame_ms;
+	if (typeof voice.max_segment_ms === 'number') out.maxSegmentMs = voice.max_segment_ms;
+	if (typeof voice.min_segment_ms === 'number') out.minSegmentMs = voice.min_segment_ms;
+	// Base-level defaults
+	if (t.wrapup && typeof t.wrapup.prompt === 'string') out.wrapupPrompt = t.wrapup.prompt;
+	if (t.wrapup && Array.isArray(t.wrapup.tips)) out.wrapupTips = t.wrapup.tips;
+	if (t.whisper && typeof t.whisper.prompt === 'string') out.asrPrompt = t.whisper.prompt;
+
+	if (profile) {
+		const profiles = (t.profile || {}) as Record<string, any>;
+		const p = profiles[profile];
+		if (p && typeof p === 'object') {
+			out.profile = profile;
+			// Merge allowed_commanders.
+			if (Array.isArray(p.allowed_commanders)) {
+				out.allowedCommanders = [...(out.allowedCommanders ?? []), ...p.allowed_commanders];
+			}
+			// Merge tips.
+			if (Array.isArray(p.wrapup_tips)) {
+				out.wrapupTips = [...(out.wrapupTips ?? []), ...p.wrapup_tips];
+			}
+			// Merge userid_map.
+			out.userIdMap = { ...(t.userid_map || {}), ...(p.userid_map || {}) };
+			// Merge phrase_map.
+			out.phraseMap = { ...(t.phrase_map || {}), ...(p.phrase_map || {}) };
+			// Override wrapup prompt.
+			if (typeof p.wrapup_prompt === 'string') out.wrapupPrompt = p.wrapup_prompt;
+			// Override whisper prompt.
+			if (typeof p.whisper_prompt === 'string') out.asrPrompt = p.whisper_prompt;
+		}
+	}
 	return out;
 }
 
-export function loadConfig(parsed: ParsedArgs): AppConfig {
-	const fileCfg = extractFromToml(loadTomlConfig());
+export function loadConfig(parsed: CliArgs): AppConfig {
+	const fileCfg = extractFromToml(loadTomlConfig(), parsed.profile);
 	// Secrets only from environment variables.
 	const discordToken = process.env.DISCORD_TOKEN || '';
 	if (!discordToken) {
@@ -52,12 +99,10 @@ export function loadConfig(parsed: ParsedArgs): AppConfig {
 	}
 
 	// Precedence: CLI args > config.toml > defaults
-	// Precedence: CLI args > config.toml > defaults
 	const aiServiceUrl =
 		(parsed.aiServiceUrl as string | undefined) ||
 		fileCfg.aiServiceUrl ||
 		'ws://localhost:8771';
-	const chunkMs = fileCfg.chunkMs || 1000;
 	const allowedCommanders =
 		(parsed.allowedCommanders as string[] | undefined) || fileCfg.allowedCommanders || [];
 
@@ -65,7 +110,24 @@ export function loadConfig(parsed: ParsedArgs): AppConfig {
 	const logsPath = paths.resolveRoot('logs');
 	const wrapupsPath = paths.resolveRoot('wrapups');
 
-	return { discordToken, aiServiceUrl, chunkMs, allowedCommanders, logsPath, wrapupsPath };
+	return {
+		discordToken,
+		aiServiceUrl,
+		allowedCommanders,
+		logsPath,
+		wrapupsPath,
+		profile: fileCfg.profile,
+		userIdMap: fileCfg.userIdMap,
+		phraseMap: fileCfg.phraseMap,
+		wrapupPrompt: fileCfg.wrapupPrompt,
+		wrapupTips: fileCfg.wrapupTips,
+		asrPrompt: fileCfg.asrPrompt,
+		vadDbThreshold: fileCfg.vadDbThreshold,
+		silenceGapMs: fileCfg.silenceGapMs,
+		vadFrameMs: fileCfg.vadFrameMs,
+		maxSegmentMs: fileCfg.maxSegmentMs,
+		minSegmentMs: fileCfg.minSegmentMs,
+	};
 }
 
 export function newSessionId(): string {

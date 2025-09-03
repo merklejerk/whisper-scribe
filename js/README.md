@@ -8,7 +8,7 @@ This service replaces the legacy Python `py-cord` layer. It connects to Discord 
 2. Join target voice channel (env or CLI supplied `VOICE_CHANNEL_ID`).
 3. Capture user audio via `@discordjs/voice` receiver.
 4. Assemble fixed-duration PCM chunks per user (e.g. 1000ms @ 48kHz stereo → mono downmix).
-5. Base64 encode and send `audio.chunk` messages to Python service.
+5. Base64 encode and send `audio.segment` messages to Python service.
 6. Forward `!wrapup` / `!log` commands from the associated text channel.
 7. Receive events (`transcription.segment`, `wrapup.ready`) and post messages/files back to Discord.
 

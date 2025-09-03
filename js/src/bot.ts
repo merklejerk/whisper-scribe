@@ -16,17 +16,17 @@ export interface RunBotOptions {
 	aiServiceUrl?: string;
 	sessionName?: string;
 	allowedCommanders?: string[];
+	profile?: string;
 }
 
 export async function runBot(opts: RunBotOptions) {
-	// First positional arg is the required voice channel id
-
 	const allowedCommanders = opts.allowedCommanders;
 
 	// Load the main app config (does not require voice channel id)
 	const cfg = loadConfig({
 		aiServiceUrl: opts.aiServiceUrl,
 		allowedCommanders,
+		profile: opts.profile,
 	});
 
 	// Voice channel id MUST be provided via CLI args
@@ -72,6 +72,16 @@ export async function runBot(opts: RunBotOptions) {
 				logsPath: cfg.logsPath,
 				wrapupsPath: cfg.wrapupsPath,
 				userDirectory,
+				profile: cfg.profile,
+				userIdMap: cfg.userIdMap,
+				phraseMap: cfg.phraseMap,
+				wrapupPrompt: cfg.wrapupPrompt,
+				wrapupTips: cfg.wrapupTips,
+				asrPrompt: cfg.asrPrompt,
+				vadDbThreshold: cfg.vadDbThreshold,
+				silenceGapMs: cfg.silenceGapMs,
+				vadFrameMs: cfg.vadFrameMs,
+				maxSegmentMs: cfg.maxSegmentMs,
 			});
 
 			const connection = joinVoiceChannel({
@@ -112,7 +122,7 @@ export async function runBot(opts: RunBotOptions) {
 				}
 			});
 
-			await attachVoiceReceiver(connection, session.getChunker());
+			await attachVoiceReceiver(connection, session.getSegmenter());
 			session.start();
 			console.log(`Successfully joined voice channel: ${voiceChannel.name}`);
 			debug('Session started and voice receiver attached.');

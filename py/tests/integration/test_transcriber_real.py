@@ -29,13 +29,11 @@ def _read_audio_to_pcm16_bytes(path: Path) -> bytes:
     # downmix to mono
     mono = audio.mean(axis=1)
     if sr != TARGET_SR:
-        # Use polyphase resampling for quality; gcd approximation: up = TARGET_SR, down = sr
-        # To keep it simple: resample_poly handles arbitrary rates
-        # Note: resample_poly expects integers; use ratio approximation
-
-        g = gcd(int(TARGET_SR), int(sr)) if sr.is_integer() else 1
+        # Use polyphase resampling for quality; derive integer ratio using gcd on ints
+        sr_int = int(round(sr))
+        g = gcd(int(TARGET_SR), sr_int)
         up = int(TARGET_SR // g)
-        down = int(sr // g) if sr.is_integer() else int(sr)
+        down = int(sr_int // g)
         mono = resample_poly(mono, up, down).astype(np.float32)
     # clip to [-1,1] and convert to int16
     mono = np.clip(mono, -1.0, 1.0)
@@ -65,12 +63,11 @@ async def test_real_transcribe_emits_text(monkeypatch):
         model=model,
         logprob_threshold=-1.0,
         no_speech_threshold=0.6,
-        prompt="this is a clip from a youtube video.",
     )
     t = AsyncWhisperTranscriber(cfg, emit_cb=emit_cb)
     await t.start()
     try:
-        await t.submit(TranscribeJob(id="real", pcm16=pcm_bytes))
+        await t.submit(TranscribeJob(id="real", pcm16=pcm_bytes, prompt="this is a clip from a youtube video."))
         # Wait until processed (with timeout safety)
         try:
             await asyncio.wait_for(t.queue.join(), timeout=60)

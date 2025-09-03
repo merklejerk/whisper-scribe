@@ -14,7 +14,8 @@ class StubPipeline:
     def __init__(self, result: Any):
         self._result = result
 
-    def __call__(self, audio_np, return_timestamps: bool, generate_kwargs: Dict[str, Any], chunk_length_s: int):
+    # New transcriber calls pipeline(audio, return_timestamps=True, generate_kwargs=..., ...)
+    def __call__(self, audio_np, return_timestamps: bool = True, generate_kwargs: Dict[str, Any] | None = None, **kwargs):  # type: ignore[override]
         return self._result
 
 
@@ -67,7 +68,6 @@ async def test_integration_pass_pcm_from_wav(tmp_path, monkeypatch):
         model="openai/whisper-tiny",
         logprob_threshold=-1.0,
         no_speech_threshold=0.6,
-        prompt="",
     )
     t = AsyncWhisperTranscriber(cfg, emit_cb=emit_cb)
     await t.start()

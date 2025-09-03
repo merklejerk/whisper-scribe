@@ -6,43 +6,48 @@ import base64
 import signal
 import websockets
 from websockets.legacy.server import WebSocketServerProtocol
-import time
 import contextlib
 import uuid
-from typing import Dict, Optional
+import typing
 from dataclasses import dataclass
 from pydantic import ValidationError
 import numpy as np
 from . import messages
 from .config import load_app_config
 from .transcriber import AsyncWhisperTranscriber, TranscribeJob, TranscriptionResult
-from .segmenter import PerUserSegmenter
 from .wrapup import generate_transcript, GeminiWrapupGenerator, LLMRequestError
 from .audio import normalize_to_mono16k, enhance_speech, TARGET_SR
 
+MAX_MSG_SIZE = 10 * 1024 * 1024
+
 class WsServer:
+	loop: asyncio.AbstractEventLoop
+	transcriber: AsyncWhisperTranscriber
+	clients: set[WebSocketServerProtocol]
+	_user_prompt: dict[str, typing.Optional[str]]
+	_job_meta: dict[str, JobMeta]
+	_stopping: bool
+
 	def __init__(self):
 		self.loop = asyncio.get_event_loop()
-		# Load global config once and refine per component
+		# Base config; callers may pass per-request overrides in messages
 		app_cfg = load_app_config()
-		# Keep a reference to the loaded app config to avoid reloading
-		self.app_cfg = app_cfg
 		whisper_cfg = AsyncWhisperTranscriber.WhisperRuntimeCfg(
 			device=app_cfg.device,
 			model=app_cfg.whisper.model,
 			logprob_threshold=app_cfg.whisper.logprob_threshold,
 			no_speech_threshold=app_cfg.whisper.no_speech_threshold,
-			prompt=app_cfg.whisper.prompt,
 		)
 		self.transcriber = AsyncWhisperTranscriber(whisper_cfg)
-		self.clients: set[WebSocketServerProtocol] = set()
-		self.segmenters: Dict[str, PerUserSegmenter] = {}
+		self.transcriber.set_emit_callback(self.handle_transcription_segment)
+		self.clients = set()
+		# Track the most recent per-user prompt provided by the client
+		self._user_prompt = {}
 		# Correlation metadata for in-flight transcription jobs
-		self._job_meta: Dict[str, JobMeta] = {}
+		self._job_meta = {}
 		self._stopping = False
-		self._flusher_task: asyncio.Task | None = None
-		# Flusher wake-up event (nudge on new chunks)
-		self._flush_nudge: asyncio.Event = asyncio.Event()
+		# No internal segmenters; Node performs VAD and sends complete segments
+
 
 	async def emit(self, msg: messages.Outgoing):
 		data = msg.model_dump()
@@ -65,7 +70,7 @@ class WsServer:
 		msg = messages.TranscriptionMessage(
 			v=1,
 			type='transcription',
-			user_id=meta.user_id,
+			id=meta.id,
 			text=segment.text,
 			capture_ts=float(meta.capture_ts),
 			end_ts=float(meta.end_ts),
@@ -85,24 +90,17 @@ class WsServer:
 
 		msg_type = obj.get('type')
 
-		if msg_type == 'audio.chunk':
+		if msg_type == 'audio.segment':
 			try:
-				msg = messages.AudioChunkMessage(**obj)
+				msg = messages.AudioSegmentMessage(**obj)
 			except ValidationError as e:
-				await self._emit_error('bad_request', f'invalid audio.chunk: {e}')
+				await self._emit_error('bad_request', f'invalid audio.segment: {e}')
 				return
 
-			user_key = msg.user_id
-			if user_key not in self.segmenters:
-				cfg = self.app_cfg
-				self.segmenters[user_key] = PerUserSegmenter(
-					user_id=msg.user_id,
-					silence_gap_s=cfg.voice.silence_threshold_seconds,
-					vad_threshold=cfg.voice.vad_threshold,
-					max_segment_s=max(1.0, float(cfg.voice.max_speech_buf_seconds) or 60.0),
-				)
+			# Store last-seen prompt for this user; Node may override per segment
+			self._user_prompt[msg.id] = getattr(msg, 'prompt', None)
 
-			segmenter = self.segmenters[user_key]
+			# Decode/normalize audio to mono16k
 			fmt = msg.pcm_format
 			try:
 				pcm16 = normalize_to_mono16k(
@@ -115,10 +113,21 @@ class WsServer:
 				await self._emit_error('bad_audio_format', str(e))
 				return
 
-			# Queue chunk; flusher will process and submit
-			segmenter.feed(pcm16, msg.capture_ts)
-			# Nudge flusher so inactivity-based finalization runs promptly
-			self._flush_nudge.set()
+			# Enhance audio and submit as a single ASR job
+			audio_float32 = np.frombuffer(pcm16, dtype='<i2').astype('float32') / 32768.0
+			enhanced_float32 = enhance_speech(audio_float32, TARGET_SR)
+			enhanced_pcm16 = (enhanced_float32 * 32767.0).astype('<i2').tobytes()
+
+			job_id = uuid.uuid4().hex
+			# Capture both start and end timestamps from Node-provided values
+			self._job_meta[job_id] = JobMeta(
+				id=msg.id,
+				capture_ts=float(msg.started_ts),
+				end_ts=float(msg.capture_ts),
+			)
+			prompt = self._user_prompt.get(msg.id)
+			job = TranscribeJob(id=job_id, pcm16=enhanced_pcm16, prompt=prompt)
+			await self.transcriber.submit(job)
 
 		elif msg_type == 'wrapup.request':
 			try:
@@ -126,22 +135,29 @@ class WsServer:
 			except ValidationError as e:
 				await self._emit_error('bad_request', f'invalid wrapup.request: {e}')
 				return
-			cfg = self.app_cfg
-			if cfg.gemini_api_key is None:
+			base_cfg = load_app_config()
+			if base_cfg is None:
+				await self._emit_error('server_config', 'No configuration available')
+				return
+			if base_cfg.gemini_api_key is None:
 				await self._emit_error('missing_api_key', 'Gemini API key is not configured')
 				return
 
-			transcript = generate_transcript(msg.log_entries, msg.session_name)
+			transcript = generate_transcript(
+				log_entries=msg.log_entries,
+				session_name=msg.session_name,
+			)
 			# Use Gemini-based wrapup generator; pass configured API key
 			generator = GeminiWrapupGenerator(
-				cfg.gemini_api_key,
-				cfg.wrapup.model,
-				prompt=cfg.wrapup.prompt,
-				temperature=cfg.wrapup.temperature,
-				max_output_tokens=cfg.wrapup.max_output_tokens,
+				base_cfg.gemini_api_key,
+				base_cfg.wrapup.model,
+				prompt=(getattr(msg, 'wrapup_prompt', None) or base_cfg.wrapup.prompt),
+				temperature=base_cfg.wrapup.temperature,
+				max_output_tokens=base_cfg.wrapup.max_output_tokens,
 			)
 			try:
-				outline = await generator.generate(transcript, tips=list(cfg.wrapup.tips))
+				tips = getattr(msg, 'wrapup_tips', None)
+				outline = await generator.generate(transcript, tips=(list(tips) if tips is not None else list(base_cfg.wrapup.tips)))
 			except LLMRequestError as e:
 				# Preserve the original error code/message in the WS error reply
 				code = str(e.code) if hasattr(e, 'code') else 'llm_error'
@@ -197,80 +213,32 @@ class WsServer:
 
 		# Do not start heavy components (model load) until socket bind succeeds.
 		try:
-			async with websockets.serve(self._handler, host, port):
+			async with websockets.serve(self._handler, host, port, max_size=MAX_MSG_SIZE):
 				print(f"WS server listening on ws://{host}:{port}")
-				# Start transcriber after successful bind
-				self.transcriber.set_emit_callback(self.handle_transcription_segment)
-				# If the transcriber encounters a fatal error, halt the server by setting the stop future's exception
+				# Configure fatal propagation for the transcriber
 				def _fatal_handler(exc: BaseException):
 					if not stop_future.done():
 						stop_future.set_exception(exc)
 				self.transcriber.set_on_fatal(_fatal_handler)
-				transcriber_started = False
-				try:
-					await self.transcriber.start()
-					transcriber_started = True
-					# Start periodic flusher to finalize segments on inactivity
-					self._flusher_task = asyncio.create_task(self._run_flusher(stop_future), name="segmenter-flusher")
-					# Fail-fast: if the flusher task crashes, propagate its exception to stop the server
-					def _flusher_done(task: asyncio.Task):
-						if task.cancelled():
-							return
-						exc = task.exception()
-						if exc and not stop_future.done():
-							stop_future.set_exception(exc)
-					self._flusher_task.add_done_callback(_flusher_done)
-					await stop_future
-				finally:
-					self._stopping = True
-					if transcriber_started:
-						await self.transcriber.stop()
-					if self._flusher_task is not None:
-						self._flusher_task.cancel()
-						with contextlib.suppress(asyncio.CancelledError):
-							await self._flusher_task
-					await asyncio.gather(*[c.close() for c in list(self.clients)], return_exceptions=True)
-					print("Shutdown complete.")
+				# Start ASR worker now that bind succeeded
+				await self.transcriber.start()
+				await stop_future
+				# Shutdown sequence
+				self._stopping = True
+				# Stop transcriber
+				with contextlib.suppress(Exception):
+					await self.transcriber.stop()
+				await asyncio.gather(*[c.close() for c in list(self.clients)], return_exceptions=True)
+				print("Shutdown complete.")
 		except OSError as e:
 			# Bind failed (address in use or permission denied). Avoid loading model.
 			print(f"Failed to bind ws://{host}:{port}: {e}")
 
-	async def _run_flusher(self, stop_future: asyncio.Future):
-		"""Submit segments in one place, driven by collect_ready.
-
-		Wakes on either a fixed interval (250 ms) or an explicit nudge when new
-		audio arrives. PerUserSegmenter manages ready segments; collect_ready returns them.
-		"""
-		interval = 0.25
-		while not stop_future.done():
-			# Wait for either a nudge or the interval to elapse
-			try:
-				await asyncio.wait_for(self._flush_nudge.wait(), timeout=interval)
-			except asyncio.TimeoutError:
-				pass
-			self._flush_nudge.clear()
-
-			now = time.time()
-			# Process pending audio and finalize segments; drains ready queue
-			for user_id, seg in list(self.segmenters.items()):
-				segments = seg.collect_ready(now)
-				for s in segments:
-					# Create a correlation id and store metadata for the outgoing message
-					job_id = uuid.uuid4().hex
-					self._job_meta[job_id] = JobMeta(user_id=user_id, capture_ts=s.start_ts, end_ts=s.end_ts)
-					
-					# Enhance audio before submitting
-					audio_float32 = np.frombuffer(s.pcm16, dtype='<i2').astype('float32') / 32768.0
-					enhanced_float32 = enhance_speech(audio_float32, TARGET_SR)
-					enhanced_pcm16 = (enhanced_float32 * 32767.0).astype('<i2').tobytes()
-
-					job = TranscribeJob(id=job_id, pcm16=enhanced_pcm16)
-					await self.transcriber.submit(job)
 
 # Typed job metadata for correlation and timestamps
 @dataclass
 class JobMeta:
-	user_id: str
+	id: str
 	capture_ts: float
 	end_ts: float
 

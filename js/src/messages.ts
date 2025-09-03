@@ -1,4 +1,3 @@
-// Protocol message type definitions (Phase 1 draft)
 // Keep in sync with Python side Pydantic models later.
 import { z } from 'zod';
 import type { JsonlLogEntry } from './logs.js';
@@ -8,19 +7,21 @@ export interface BaseMessage {
 	type: string;
 }
 
-export interface AudioChunkMessage extends BaseMessage {
-	type: 'audio.chunk';
-	user_id: string;
+export interface AudioSegmentMessage extends BaseMessage {
+	type: 'audio.segment';
+	id: string;
 	index: number;
 	pcm_format: { sr: number; channels: number; sample_width: number };
 	started_ts: number;
 	capture_ts: number;
 	data_b64: string; // base64 encoded PCM16 LE mono frames
+	// Optional per-job Whisper prompt override
+	prompt?: string;
 }
 
 export interface TranscriptionMessage extends BaseMessage {
 	type: 'transcription';
-	user_id: string;
+	id: string;
 	text: string;
 	capture_ts: number;
 	end_ts: number;
@@ -47,9 +48,12 @@ export interface WrapupRequestMessage extends BaseMessage {
 	start_ts: number;
 	log_entries: WrapupLogEntry[];
 	request_id: string;
+	// Optional wrapup overrides
+	wrapup_prompt?: string;
+	wrapup_tips?: string[];
 }
 
-export type OutboundToPython = AudioChunkMessage | WrapupRequestMessage;
+export type OutboundToPython = AudioSegmentMessage | WrapupRequestMessage;
 
 // Wire shape sent to Python summarizer (snake_case, minimal fields)
 export interface WrapupLogEntry {
@@ -60,13 +64,26 @@ export interface WrapupLogEntry {
 	user_id: string;
 }
 
-// Convert stored JSONL entries (camelCase internal) into wire shape for wrapup
-export function toWrapupLogEntry(entry: JsonlLogEntry): WrapupLogEntry {
+// Convert stored JSONL entries (camelCase internal) into wire shape for wrapup,
+// applying optional userid->alias mapping and phrase substitutions.
+export function toWrapupLogEntry(
+	entry: JsonlLogEntry,
+	userIdMap?: Record<string, string>,
+	phraseMap?: Record<string, string>,
+): WrapupLogEntry {
+	const alias = userIdMap?.[entry.userId];
+	let text = entry.text;
+	if (phraseMap && Object.keys(phraseMap).length) {
+		for (const [src, dst] of Object.entries(phraseMap)) {
+			if (!src) continue;
+			text = text.replaceAll(src, dst);
+		}
+	}
 	return {
-		user_name: entry.displayName,
+		user_name: alias ?? entry.displayName,
 		start_ts: entry.startTs,
 		end_ts: entry.endTs,
-		text: entry.text,
+		text,
 		user_id: entry.userId,
 	};
 }
@@ -75,7 +92,7 @@ export function toWrapupLogEntry(entry: JsonlLogEntry): WrapupLogEntry {
 const base = z.object({ v: z.number(), type: z.string() });
 export const transcriptionSchema = base.extend({
 	type: z.literal('transcription'),
-	user_id: z.string(),
+	id: z.string(),
 	text: z.string(),
 	capture_ts: z.number(),
 	end_ts: z.number(),

@@ -18,12 +18,19 @@ async function showLog(sessionName: string) {
 	console.log(text || '(empty)');
 }
 
-async function generateWrapup(sessionName: string, aiServiceUrl?: string, writeOut?: boolean) {
-	const appCfg = loadConfig({ aiServiceUrl });
+async function generateWrapup(
+	sessionName: string,
+	aiServiceUrl?: string,
+	writeOut?: boolean,
+	profile?: string,
+) {
+	const appCfg = loadConfig({ aiServiceUrl, profile });
 	const logsDir = appCfg.logsPath;
 	const logFilePath = path.join(logsDir, `${sessionName}.jsonl`);
 	const entries = await readLogEntriesStrict(logFilePath);
-	const wrapupEntries = entries.map(toWrapupLogEntry);
+	const transformed = entries.map((e) =>
+		toWrapupLogEntry(e, appCfg.userIdMap, appCfg.phraseMap),
+	);
 	const requestId = randomUUID();
 
 	let clientResolve: ((v: any) => void) | null = null;
@@ -56,8 +63,10 @@ async function generateWrapup(sessionName: string, aiServiceUrl?: string, writeO
 			type: 'wrapup.request',
 			session_name: sessionName,
 			start_ts: firstEntryTs,
-			log_entries: wrapupEntries,
+			log_entries: transformed,
 			request_id: requestId,
+			wrapup_prompt: appCfg.wrapupPrompt,
+			wrapup_tips: appCfg.wrapupTips,
 		};
 		client.send(wrapupReq);
 	});
@@ -103,6 +112,11 @@ async function main() {
 						type: 'string',
 						describe: 'AI service URL',
 					})
+					.option('profile', {
+						alias: 'p',
+						type: 'string',
+						describe: 'Optional profile name to apply config overrides',
+					})
 					.option('session-name', {
 						alias: 's',
 						type: 'string',
@@ -121,6 +135,7 @@ async function main() {
 					aiServiceUrl: argv.aiServiceUrl,
 					sessionName: argv.sessionName,
 					allowedCommanders: argv.allowedCommanders,
+					profile: argv.profile as string | undefined,
 				});
 			},
 		)
@@ -153,6 +168,11 @@ async function main() {
 						type: 'string',
 						describe: 'AI service websocket URL (overrides config)',
 					})
+					.option('profile', {
+						alias: 'p',
+						type: 'string',
+						describe: 'Optional profile name to apply config overrides',
+					})
 					.option('output', {
 						alias: 'O',
 						type: 'boolean',
@@ -165,6 +185,7 @@ async function main() {
 					argv.session,
 					argv['ai-service-url'] as string | undefined,
 					argv.output as boolean | undefined,
+					argv.profile as string | undefined,
 				);
 			},
 		)

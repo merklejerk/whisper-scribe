@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional, Callable, Awaitable, Protocol, runtime_checkable
+import typing
 import numpy as np
 from dataclasses import dataclass
 from transformers import pipeline, WhisperProcessor
@@ -15,12 +15,14 @@ from . import config
 class TranscribeJob:
 	id: str
 	pcm16: bytes  # 16kHz mono little-endian
+	# Profiles can only override the prompt; keep this strongly typed
+	prompt: typing.Optional[str] = None
 
 TARGET_SR = 16000  # expected incoming sample rate
 
 
-@runtime_checkable
-class TranscriberLike(Protocol):
+@typing.runtime_checkable
+class TranscriberLike(typing.Protocol):
 	async def start(self) -> None: ...
 	async def stop(self) -> None: ...
 	async def submit(self, job: 'TranscribeJob') -> None: ...
@@ -41,23 +43,22 @@ class AsyncWhisperTranscriber:
 		model: str
 		logprob_threshold: float
 		no_speech_threshold: float
-		prompt: str
 
-	def __init__(self, cfg: 'AsyncWhisperTranscriber.WhisperRuntimeCfg', emit_cb: Optional[Callable[[TranscriptionResult], Awaitable[None]]] = None):
+	def __init__(self, cfg: 'AsyncWhisperTranscriber.WhisperRuntimeCfg', emit_cb: typing.Optional[typing.Callable[[TranscriptionResult], typing.Awaitable[None]]] = None):
 		self.emit_cb = emit_cb
 		self.queue: asyncio.Queue[TranscribeJob] = asyncio.Queue(maxsize=64)
-		self._task: Optional[asyncio.Task] = None
+		self._task: typing.Optional[asyncio.Task] = None
 		self._pipe = None
 		self._processor = None
-		self._prompt_ids = None
+		self._prompt_cache: dict[str, object] = {}
 		self._cfg = cfg
 		self._dbg = make_debug_logger('transcriber')
-		self._on_fatal: Optional[Callable[[BaseException], None]] = None
+		self._on_fatal: typing.Optional[typing.Callable[[BaseException], None]] = None
 
-	def set_emit_callback(self, cb: Callable[[TranscriptionResult], Awaitable[None]]):
+	def set_emit_callback(self, cb: typing.Callable[[TranscriptionResult], typing.Awaitable[None]]):
 		self.emit_cb = cb
 
-	def set_on_fatal(self, cb: Callable[[BaseException], None]):
+	def set_on_fatal(self, cb: typing.Callable[[BaseException], None]):
 		"""Register a callback invoked when the transcriber encounters a fatal error.
 
 		The callback runs in the event loop thread before the exception is re-raised
@@ -81,12 +82,7 @@ class AsyncWhisperTranscriber:
 				device=dev_arg,
 			)
 		self._pipe = await loop.run_in_executor(None, load_pipe)
-		# Precompute prompt_ids once if prompt configured
-		prompt_text = self._cfg.prompt
-		if prompt_text and self._processor:
-			self._prompt_ids = self._processor\
-				.get_prompt_ids(prompt_text, return_tensors="pt")\
-				.to(dev_arg)
+	# Do not seed any prompt at startup; prompts come via per-job overrides
 
 		self._task = asyncio.create_task(self._run(), name='whisper-transcriber')
 
@@ -117,19 +113,29 @@ class AsyncWhisperTranscriber:
 				audio_np = np.frombuffer(job.pcm16, dtype='<i2').astype('float32') / 32768.0
 				if audio_np.size == 0:
 					raise ValueError("Decoded audio array is empty")
-				# Build generation kwargs from provided cfg
+				# Build generation kwargs from provided cfg (thresholds are static),
+				# and apply per-job prompt override when provided.
 				whisper_cfg = self._cfg
 				generate_kwargs = {
-					'temperature': (0.0, 0.1, 0.25, 0.5),
+					'temperature': (0.0, 0.25, 0.33, 0.66),
 					'logprob_threshold': float(whisper_cfg.logprob_threshold),
 					'no_speech_threshold': float(whisper_cfg.no_speech_threshold),
 					'condition_on_prev_tokens': True,
 					'compression_ratio_threshold': 1.35,
 					'forced_decoder_ids': None,
+					'compression_ratio_threshold': 2.4
 				}
-				# Attach precomputed prompt ids once (first segment) if available
-				if self._prompt_ids is not None:
-					generate_kwargs['prompt_ids'] = self._prompt_ids
+				# Attach prompt ids based on per-job override only; cache per text
+				use_prompt = job.prompt
+				if use_prompt and self._processor is not None:
+					ids = self._prompt_cache.get(use_prompt)
+					if ids is None:
+						# Compute and memoize prompt ids on current device
+						resolved = resolve_device(self._cfg.device)
+						dev_arg = resolved.pipeline_index
+						ids = self._processor.get_prompt_ids(use_prompt, return_tensors="pt").to(dev_arg)
+						self._prompt_cache[use_prompt] = ids
+					generate_kwargs['prompt_ids'] = ids
 					generate_kwargs['prompt_condition_type'] = 'first-segment'
 				# Force english if model isn't .en variant like legacy
 				model_name_lower = self._cfg.model.lower()

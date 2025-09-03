@@ -1,11 +1,11 @@
 import {
-	AudioChunkMessage,
+	AudioSegmentMessage,
 	WrapupResponseMessage,
 	TranscriptionMessage,
 	WrapupRequestMessage,
 	ErrorMessage,
 } from './messages.js';
-import { PerUserVoiceChunker, VoiceChunk } from './voiceReceiver.js';
+import { PerUserVoiceSegmenter, VoiceSegment } from './voiceReceiver.js';
 import { UserDirectory } from './userDirectory.js';
 import { pcm16ToBase64 } from './audioUtils.js';
 import fs from 'fs';
@@ -26,11 +26,23 @@ export interface SessionConfig {
 	userDirectory: UserDirectory;
 	logsPath: string;
 	wrapupsPath: string;
+	profile?: string;
+	// Overrides resolved from config/profile, passed to Python directly
+	userIdMap?: Record<string, string>;
+	phraseMap?: Record<string, string>;
+	wrapupPrompt?: string;
+	wrapupTips?: string[];
+	asrPrompt?: string;
+	// Segmenter options
+	vadDbThreshold?: number;
+	silenceGapMs?: number;
+	vadFrameMs?: number;
+	maxSegmentMs?: number;
 }
 
 export class Session {
 	private readonly sessionInfo: SessionConfig;
-	private readonly chunker: PerUserVoiceChunker;
+	private readonly segmenter: PerUserVoiceSegmenter;
 	private readonly websocketClient: PythonWsClient;
 	private readonly logStream?: fs.WriteStream;
 	private readonly logFilePath: string;
@@ -40,15 +52,13 @@ export class Session {
 		this.sessionInfo = sessionInfo;
 		debug('New session created:', this.sessionInfo);
 
-		this.chunker = new PerUserVoiceChunker(
-			{
-				targetSampleRate: 16000,
-				chunkMs: 1000,
-			},
-			this.handleAudioChunk,
-			sessionInfo.userDirectory,
-			sessionInfo.guildId,
-		);
+		this.segmenter = new PerUserVoiceSegmenter({
+			send: this.handleAudioSegment,
+			vadDbThreshold: this.sessionInfo.vadDbThreshold,
+			silenceGapMs: this.sessionInfo.silenceGapMs,
+			vadFrameMs: this.sessionInfo.vadFrameMs,
+			maxSegmentMs: this.sessionInfo.maxSegmentMs,
+		});
 
 		this.websocketClient = new PythonWsClient(sessionInfo.aiServiceUrl, (msg) => {
 			if (msg.type === 'transcription') {
@@ -96,8 +106,8 @@ export class Session {
 		}
 	}
 
-	public getChunker() {
-		return this.chunker;
+	public getSegmenter() {
+		return this.segmenter;
 	}
 
 	public async logTextMessage(message: Message) {
@@ -123,38 +133,45 @@ export class Session {
 		}
 	}
 
-	private handleAudioChunk = (chunk: VoiceChunk) => {
-		// Convert internal VoiceChunk -> AudioChunkMessage for IPC
-		const audioMsg: AudioChunkMessage = {
+	private handleAudioSegment = (segment: VoiceSegment) => {
+		// Convert internal VoiceSegment -> AudioSegmentMessage for IPC
+		// Warm user directory mapping in the background; don't block audio send.
+		void this.sessionInfo.userDirectory.ensureDisplayName(
+			segment.userId,
+			this.sessionInfo.guildId,
+		);
+		const audioMsg: AudioSegmentMessage = {
 			v: 1,
-			type: 'audio.chunk',
-			user_id: chunk.userId,
-			index: chunk.index,
+			type: 'audio.segment',
+			id: segment.userId,
+			index: segment.index,
 			pcm_format: {
-				sr: chunk.pcmFormat.sampleRate,
-				channels: chunk.pcmFormat.channels,
-				sample_width: chunk.pcmFormat.sampleWidth,
+				sr: segment.pcmFormat.sampleRate,
+				channels: segment.pcmFormat.channels,
+				sample_width: segment.pcmFormat.sampleWidth,
 			},
-			started_ts: chunk.startedTs,
-			capture_ts: chunk.captureTs,
-			data_b64: pcm16ToBase64(chunk.pcm16),
+			started_ts: segment.startedTs,
+			capture_ts: segment.captureTs,
+			data_b64: pcm16ToBase64(segment.pcm16),
+			// Per-job ASR prompt override computed on the JS side
+			prompt: this.sessionInfo.asrPrompt,
 		};
 		this.websocketClient.send(audioMsg);
-		debug(`Sent audio chunk ${chunk.index} for user ${chunk.userId}`);
+		debug(`Sent audio segment ${segment.index} for user ${segment.userId}`);
 	};
 
 	private handleTranscription = (segment: TranscriptionMessage) => {
-		// Prefer directory display name; fall back to user_id when unknown
+		// Prefer directory display name; fall back to id when unknownreceived
 		const display = this.sessionInfo.userDirectory.getDisplayNameSync(
-			segment.user_id,
+			segment.id,
 			this.sessionInfo.guildId,
 		);
-		const userName = display && display.length ? display : segment.user_id;
+		const userName = display && display.length ? display : segment.id;
 		debug('Received transcription:', segment);
 		// Append JSONL line to log file
 		if (this.logStream) {
 			const out: JsonlLogEntry = {
-				userId: segment.user_id,
+				userId: segment.id,
 				displayName: userName,
 				startTs: segment.capture_ts,
 				endTs: segment.end_ts,
@@ -178,13 +195,21 @@ export class Session {
 		const entries = await this.readLogEntries();
 		// Use the timestamp of the first log entry if available; otherwise use current time
 		const startTs = entries && entries.length > 0 ? entries[0].startTs : Date.now() / 1000;
+		// Build wire entries, then apply configured username/phrase maps on the JS side
+		const transformed = entries.map((e) =>
+			toWrapupLogEntry(e, this.sessionInfo.userIdMap, this.sessionInfo.phraseMap),
+		);
+
 		const wrapupReq: WrapupRequestMessage = {
 			v: 1,
 			type: 'wrapup.request',
 			session_name: this.sessionInfo.sessionName,
 			start_ts: startTs,
-			log_entries: entries.map(toWrapupLogEntry),
+			log_entries: transformed,
 			request_id: requestId,
+			// userid_map/phrase_map applied in JS to avoid double application downstream
+			wrapup_prompt: this.sessionInfo.wrapupPrompt,
+			wrapup_tips: this.sessionInfo.wrapupTips,
 		};
 		this.websocketClient.send(wrapupReq);
 		debug('Sent wrapup request to Python service.');

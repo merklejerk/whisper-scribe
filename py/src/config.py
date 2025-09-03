@@ -96,8 +96,8 @@ def load_app_config() -> AppConfig:
 	voice = raw.get('voice', {})
 	wrapup = raw.get('wrapup', {})
 	refiner = raw.get('refiner', {})
-	username_map = raw.get('username_map', {}) or {}
-	phrase_map = raw.get('phrase_map', {}) or {}
+	username_map = dict(raw.get('username_map', {}) or {})
+	phrase_map = dict(raw.get('phrase_map', {}) or {})
 
 	# Only secrets (e.g. OPENAI_API_KEY) come from environment; all functional knobs come from config.toml.
 	whisper_cfg = WhisperCfg(
