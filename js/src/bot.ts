@@ -7,6 +7,7 @@ import {
 } from '@discordjs/voice';
 import { loadConfig, newSessionId } from './config.js';
 import { Session } from './session.js';
+import { PerUserVoiceSegmenter } from './voiceReceiver.js';
 import { UserDirectory } from './userDirectory.js';
 import { attachVoiceReceiver } from './voiceReceiver.js';
 import { debug } from './debug.js';
@@ -43,6 +44,7 @@ export async function runBot(opts: RunBotOptions) {
 
 	let session: Session | null = null;
 	let activeGuildId: string | null = null;
+	let segmenter: PerUserVoiceSegmenter | null = null;
 
 	client.once(Events.ClientReady, async () => {
 		console.log(`Logged in as ${client.user?.tag}`);
@@ -77,11 +79,11 @@ export async function runBot(opts: RunBotOptions) {
 				phraseMap: cfg.phraseMap,
 				wrapupPrompt: cfg.wrapupPrompt,
 				wrapupTips: cfg.wrapupTips,
+				wrapupModel: cfg.wrapupModel,
+				wrapupTemperature: cfg.wrapupTemperature,
+				wrapupMaxTokens: cfg.wrapupMaxTokens,
+				geminiApiKey: cfg.geminiApiKey,
 				asrPrompt: cfg.asrPrompt,
-				vadDbThreshold: cfg.vadDbThreshold,
-				silenceGapMs: cfg.silenceGapMs,
-				vadFrameMs: cfg.vadFrameMs,
-				maxSegmentMs: cfg.maxSegmentMs,
 			});
 
 			const connection = joinVoiceChannel({
@@ -122,7 +124,15 @@ export async function runBot(opts: RunBotOptions) {
 				}
 			});
 
-			await attachVoiceReceiver(connection, session.getSegmenter());
+			// Create the per-user segmenter here and attach it to the voice receiver.
+			segmenter = new PerUserVoiceSegmenter({
+				send: session.handleAudioSegment,
+				vadDbThreshold: cfg.vadDbThreshold,
+				silenceGapMs: cfg.silenceGapMs,
+				vadFrameMs: cfg.vadFrameMs,
+				maxSegmentMs: cfg.maxSegmentMs,
+			});
+			await attachVoiceReceiver(connection, segmenter);
 			session.start();
 			console.log(`Successfully joined voice channel: ${voiceChannel.name}`);
 			debug('Session started and voice receiver attached.');
@@ -180,7 +190,7 @@ export async function runBot(opts: RunBotOptions) {
 		try {
 			if (command === '!wrapup') {
 				console.log(`Wrapup command received from ${message.author.tag}`);
-				await session.handleWrapup(message);
+				await session.handleWrapupCommand(message);
 			} else if (command === '!log') {
 				console.log(`Log command received from ${message.author.tag}`);
 				await session.handleLogCommand(message);
@@ -196,6 +206,14 @@ export async function runBot(opts: RunBotOptions) {
 		debug('Graceful shutdown initiated.');
 		if (session && activeGuildId) {
 			session.stop();
+			// Flush pending segments before destroying connection
+			if (segmenter) {
+				try {
+					await segmenter.flushAll();
+				} catch (e) {
+					debug('Error flushing segmenter:', e);
+				}
+			}
 			const connection = getVoiceConnection(activeGuildId);
 			connection?.destroy();
 			session = null;

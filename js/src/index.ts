@@ -5,9 +5,8 @@ import fs from 'fs';
 import paths from './paths.js';
 import { readLogEntriesStrict, formatLogLines } from './logs.js';
 import { runBot } from './bot.js';
-import { PythonWsClient } from './websocketClient.js';
-import { toWrapupLogEntry, WrapupRequestMessage } from './messages.js';
-import { randomUUID } from 'crypto';
+import { toWrapupLogEntry } from './messages.js';
+import { createWrapup } from './wrapup.js';
 import { loadConfig } from './config.js';
 
 async function showLog(sessionName: string) {
@@ -18,80 +17,46 @@ async function showLog(sessionName: string) {
 	console.log(text || '(empty)');
 }
 
-async function generateWrapup(
-	sessionName: string,
-	aiServiceUrl?: string,
-	writeOut?: boolean,
-	profile?: string,
-) {
-	const appCfg = loadConfig({ aiServiceUrl, profile });
-	const logsDir = appCfg.logsPath;
-	const logFilePath = path.join(logsDir, `${sessionName}.jsonl`);
-	const entries = await readLogEntriesStrict(logFilePath);
-	const transformed = entries.map((e) =>
-		toWrapupLogEntry(e, appCfg.userIdMap, appCfg.phraseMap),
-	);
-	const requestId = randomUUID();
+async function generateWrapup(sessionName: string, writeOut?: boolean, profile?: string) {
+	const appCfg = loadConfig({ aiServiceUrl: undefined, profile });
+	const logFilePath = path.join(appCfg.logsPath, `${sessionName}.jsonl`);
 
-	let clientResolve: ((v: any) => void) | null = null;
-	let clientReject: ((e: any) => void) | null = null;
-
-	const respPromise = new Promise((resolve, reject) => {
-		clientResolve = resolve;
-		clientReject = reject;
-		// timeout after 90s
-		setTimeout(() => reject(new Error('Timed out waiting for wrapup response')), 90_000);
-	});
-
-	const client = new PythonWsClient(appCfg.aiServiceUrl, (msg) => {
-		if (msg.type === 'wrapup.response' && (msg as any).request_id === requestId) {
-			if (clientResolve) clientResolve(msg);
-		}
-		if (msg.type === 'error') {
-			if (clientReject) clientReject(new Error(`Remote error: ${JSON.stringify(msg)}`));
-		}
-	});
-
-	client.setOnOpen(() => {
-		// Use the timestamp of the first log entry if available, otherwise use now
-		const firstEntryTs =
-			entries && entries.length > 0 && entries[0].startTs
-				? entries[0].startTs
-				: Date.now() / 1000;
-		const wrapupReq: WrapupRequestMessage = {
-			v: 1,
-			type: 'wrapup.request',
-			session_name: sessionName,
-			start_ts: firstEntryTs,
-			log_entries: transformed,
-			request_id: requestId,
-			wrapup_prompt: appCfg.wrapupPrompt,
-			wrapup_tips: appCfg.wrapupTips,
-		};
-		client.send(wrapupReq);
-	});
-
-	client.start();
-
-	let resp: any;
-	try {
-		resp = await respPromise;
-	} catch (e) {
-		console.error('Failed to get wrapup response:', e);
+	const apiKey = appCfg.geminiApiKey || process.env.GEMINI_API_KEY;
+	if (!apiKey) {
+		console.error('GEMINI_API_KEY must be set in environment to run wrapup.');
 		process.exit(1);
-	} finally {
-		client.stop();
 	}
 
-	if (writeOut) {
-		// Ensure wrapups dir exists
-		const wrapupsDir = appCfg.wrapupsPath;
-		paths.ensureDir(wrapupsDir);
-		const outPath = path.join(wrapupsDir, `${sessionName}.md`);
-		fs.writeFileSync(outPath, resp.outline, 'utf8');
-		console.log(`Wrote wrapup to: ${outPath}`);
-	} else {
-		console.log(resp.outline);
+	try {
+		const outline = await createWrapup({
+			logFilePath,
+			sessionName,
+			apiKey,
+			userIdMap: appCfg.userIdMap,
+			phraseMap: appCfg.phraseMap,
+			model: appCfg.wrapupModel,
+			prompt: appCfg.wrapupPrompt,
+			temperature: appCfg.wrapupTemperature,
+			maxOutputTokens: appCfg.wrapupMaxTokens,
+			tips: appCfg.wrapupTips,
+		});
+
+		if (writeOut) {
+			const wrapupsDir = appCfg.wrapupsPath;
+			paths.ensureDir(wrapupsDir);
+			const outPath = path.join(wrapupsDir, `${sessionName}.md`);
+			fs.writeFileSync(outPath, outline, 'utf8');
+			console.log(`Wrote wrapup to: ${outPath}`);
+		} else {
+			console.log(outline);
+		}
+	} catch (err: any) {
+		if (err.message === 'No log entries found for session.') {
+			console.error('No log found for that session.');
+		} else {
+			console.error(`Wrapup failed: ${err?.message || 'unknown error'}`);
+		}
+		process.exit(1);
 	}
 }
 
@@ -163,11 +128,6 @@ async function main() {
 						type: 'string',
 						demandOption: true,
 					})
-					.option('ai-service-url', {
-						alias: 'a',
-						type: 'string',
-						describe: 'AI service websocket URL (overrides config)',
-					})
 					.option('profile', {
 						alias: 'p',
 						type: 'string',
@@ -183,7 +143,6 @@ async function main() {
 			async (argv) => {
 				await generateWrapup(
 					argv.session,
-					argv['ai-service-url'] as string | undefined,
 					argv.output as boolean | undefined,
 					argv.profile as string | undefined,
 				);

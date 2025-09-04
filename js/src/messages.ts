@@ -1,4 +1,4 @@
-// Keep in sync with Python side Pydantic models later.
+// IPC message shapes used with the Python ASR service.
 import { z } from 'zod';
 import type { JsonlLogEntry } from './logs.js';
 
@@ -40,20 +40,9 @@ export interface ErrorMessage extends BaseMessage {
 	details?: any;
 }
 
-export type InboundFromPython = TranscriptionMessage | ErrorMessage | WrapupResponseMessage;
+export type InboundFromPython = TranscriptionMessage | ErrorMessage;
 
-export interface WrapupRequestMessage extends BaseMessage {
-	type: 'wrapup.request';
-	session_name: string;
-	start_ts: number;
-	log_entries: WrapupLogEntry[];
-	request_id: string;
-	// Optional wrapup overrides
-	wrapup_prompt?: string;
-	wrapup_tips?: string[];
-}
-
-export type OutboundToPython = AudioSegmentMessage | WrapupRequestMessage;
+export type OutboundToPython = AudioSegmentMessage;
 
 // Wire shape sent to Python summarizer (snake_case, minimal fields)
 export interface WrapupLogEntry {
@@ -98,11 +87,7 @@ export const transcriptionSchema = base.extend({
 	end_ts: z.number(),
 });
 
-export const wrapupResponseSchema = base.extend({
-	type: z.literal('wrapup.response'),
-	outline: z.string(),
-	request_id: z.string(),
-});
+// Note: wrapup responses are generated locally in Node now.
 
 export const errorSchema = base.extend({
 	type: z.literal('error'),
@@ -111,4 +96,4 @@ export const errorSchema = base.extend({
 	details: z.any().optional(),
 });
 
-export const inboundSchema = z.union([transcriptionSchema, wrapupResponseSchema, errorSchema]);
+export const inboundSchema = z.union([transcriptionSchema, errorSchema]);

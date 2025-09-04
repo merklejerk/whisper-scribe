@@ -31,13 +31,7 @@ class VoiceCfg:
 	vad_threshold: float = 0.75
 	max_speech_buf_seconds: int = 0
 
-@dataclass(frozen=True)
-class WrapupCfg:
-	model: str = 'gpt-4o-mini'
-	tips: tuple[str, ...] = ()
-	prompt: str = ''
-	temperature: float = 0.05
-	max_output_tokens: int = 10240
+# Wrapup configuration removed: wrapup is now handled entirely in the Node.js component.
 
 @dataclass(frozen=True)
 class RefinerCfg:
@@ -64,12 +58,10 @@ class AppConfig:
 	net: NetCfg
 	whisper: WhisperCfg
 	voice: VoiceCfg
-	wrapup: WrapupCfg
 	refiner: RefinerCfg
 	username_map: Dict[str, str]
 	phrase_map: Dict[str, str]
 	openai_api_key: Optional[str]
-	gemini_api_key: Optional[str]
 	device: str
 
 def _coerce_int_list(val) -> tuple[int, ...]:
@@ -94,7 +86,7 @@ def load_app_config() -> AppConfig:
 	net = raw.get('net', {})
 	whisper = raw.get('whisper', {})
 	voice = raw.get('voice', {})
-	wrapup = raw.get('wrapup', {})
+	# wrapup section ignored in Python; handled in Node
 	refiner = raw.get('refiner', {})
 	username_map = dict(raw.get('username_map', {}) or {})
 	phrase_map = dict(raw.get('phrase_map', {}) or {})
@@ -111,13 +103,7 @@ def load_app_config() -> AppConfig:
 		vad_threshold=float(voice.get('vad_threshold', VoiceCfg.vad_threshold)),
 		max_speech_buf_seconds=int(voice.get('max_speech_buf_seconds', VoiceCfg.max_speech_buf_seconds)),
 	)
-	wrapup_cfg = WrapupCfg(
-		model=wrapup.get('model', WrapupCfg.model),
-		tips=tuple(wrapup.get('tips', [])),
-		prompt=wrapup.get('prompt', WrapupCfg.prompt),
-		temperature=float(wrapup.get('temperature', WrapupCfg.temperature)),
-		max_output_tokens=int(wrapup.get('max_output_tokens', WrapupCfg.max_output_tokens)),
-	)
+	# no wrapup config in Python
 	refiner_cfg = RefinerCfg(
 		model=refiner.get('model'),
 		context_log_lines=int(refiner.get('context_log_lines', RefinerCfg.context_log_lines)),
@@ -140,12 +126,10 @@ def load_app_config() -> AppConfig:
 		net=net_cfg,
 		whisper=whisper_cfg,
 		voice=voice_cfg,
-		wrapup=wrapup_cfg,
 		refiner=refiner_cfg,
 		username_map=username_map,
 		phrase_map=phrase_map,
 		openai_api_key=os.getenv('OPENAI_API_KEY'),
-		gemini_api_key=os.getenv('GEMINI_API_KEY'),
 	device=os.getenv('DEVICE', 'auto'),  # auto = choose best available (cuda/mps/rocm/cpu)
 	)
 

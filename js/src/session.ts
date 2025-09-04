@@ -1,21 +1,15 @@
-import {
-	AudioSegmentMessage,
-	WrapupResponseMessage,
-	TranscriptionMessage,
-	WrapupRequestMessage,
-	ErrorMessage,
-} from './messages.js';
-import { PerUserVoiceSegmenter, VoiceSegment } from './voiceReceiver.js';
+import { AudioSegmentMessage, TranscriptionMessage, ErrorMessage } from './messages.js';
+import type { VoiceSegment } from './voiceReceiver.js';
 import { UserDirectory } from './userDirectory.js';
 import { pcm16ToBase64 } from './audioUtils.js';
 import fs from 'fs';
 import path from 'path';
 import paths from './paths.js';
 import { readLogEntriesStrict, formatLogLines, JsonlLogEntry } from './logs.js';
-import { toWrapupLogEntry } from './messages.js';
 import { PythonWsClient } from './websocketClient.js';
 import { Message, AttachmentBuilder } from 'discord.js';
 import { debug } from './debug.js';
+import { createWrapup } from './wrapup.js';
 
 export interface SessionConfig {
 	sessionId: string;
@@ -27,46 +21,40 @@ export interface SessionConfig {
 	logsPath: string;
 	wrapupsPath: string;
 	profile?: string;
-	// Overrides resolved from config/profile, passed to Python directly
 	userIdMap?: Record<string, string>;
 	phraseMap?: Record<string, string>;
 	wrapupPrompt?: string;
 	wrapupTips?: string[];
+	wrapupModel?: string;
+	wrapupTemperature?: number;
+	wrapupMaxTokens?: number;
+	geminiApiKey?: string;
 	asrPrompt?: string;
-	// Segmenter options
-	vadDbThreshold?: number;
-	silenceGapMs?: number;
-	vadFrameMs?: number;
-	maxSegmentMs?: number;
+	// Rolling ASR context configuration (optional)
+	asrContextWords?: number; // default 40
 }
 
 export class Session {
 	private readonly sessionInfo: SessionConfig;
-	private readonly segmenter: PerUserVoiceSegmenter;
 	private readonly websocketClient: PythonWsClient;
 	private readonly logStream?: fs.WriteStream;
 	private readonly logFilePath: string;
-	private pendingWrapups: Map<string, Message> = new Map();
+	// Rolling context buffer across text + voice
+	private contextWords: string[] = [];
+	private readonly maxContextWords: number;
 
 	constructor(sessionInfo: SessionConfig) {
 		this.sessionInfo = sessionInfo;
 		debug('New session created:', this.sessionInfo);
 
-		this.segmenter = new PerUserVoiceSegmenter({
-			send: this.handleAudioSegment,
-			vadDbThreshold: this.sessionInfo.vadDbThreshold,
-			silenceGapMs: this.sessionInfo.silenceGapMs,
-			vadFrameMs: this.sessionInfo.vadFrameMs,
-			maxSegmentMs: this.sessionInfo.maxSegmentMs,
-		});
+		// Configure limit for rolling context (by word count only)
+		this.maxContextWords = Math.max(0, sessionInfo.asrContextWords ?? 40);
 
 		this.websocketClient = new PythonWsClient(sessionInfo.aiServiceUrl, (msg) => {
 			if (msg.type === 'transcription') {
 				this.handleTranscription(msg as TranscriptionMessage);
 			} else if (msg.type === 'error') {
 				this.handleErrorMessage(msg as ErrorMessage);
-			} else if (msg.type === 'wrapup.response') {
-				this.handleWrapupResponse(msg as WrapupResponseMessage);
 			}
 		});
 
@@ -106,10 +94,6 @@ export class Session {
 		}
 	}
 
-	public getSegmenter() {
-		return this.segmenter;
-	}
-
 	public async logTextMessage(message: Message) {
 		const displayName =
 			(await this.sessionInfo.userDirectory.ensureDisplayName(
@@ -131,9 +115,12 @@ export class Session {
 			};
 			this.logStream.write(JSON.stringify(out) + '\n');
 		}
+
+		// Update rolling context with user text
+		this.appendContext(message.content);
 	}
 
-	private handleAudioSegment = (segment: VoiceSegment) => {
+	public handleAudioSegment = (segment: VoiceSegment) => {
 		// Convert internal VoiceSegment -> AudioSegmentMessage for IPC
 		// Warm user directory mapping in the background; don't block audio send.
 		void this.sessionInfo.userDirectory.ensureDisplayName(
@@ -153,26 +140,28 @@ export class Session {
 			started_ts: segment.startedTs,
 			capture_ts: segment.captureTs,
 			data_b64: pcm16ToBase64(segment.pcm16),
-			// Per-job ASR prompt override computed on the JS side
-			prompt: this.sessionInfo.asrPrompt,
+			// Per-job ASR prompt override computed on the JS side, with rolling context appended
+			prompt: this.composePromptWithContext(),
 		};
 		this.websocketClient.send(audioMsg);
 		debug(`Sent audio segment ${segment.index} for user ${segment.userId}`);
 	};
 
 	private handleTranscription = (segment: TranscriptionMessage) => {
+		// We use the user ID as the segment ID in the `audio.segment` message.
+		const userId = segment.id;
 		// Prefer directory display name; fall back to id when unknownreceived
 		const display = this.sessionInfo.userDirectory.getDisplayNameSync(
-			segment.id,
+			userId,
 			this.sessionInfo.guildId,
 		);
-		const userName = display && display.length ? display : segment.id;
-		debug('Received transcription:', segment);
+		const displayName = display && display.length ? display : userId;
+		debug(`Received ${(segment.end_ts - segment.capture_ts).toFixed(1)}s transcription from ${displayName}\n > "${segment.text}"\n  `);
 		// Append JSONL line to log file
 		if (this.logStream) {
 			const out: JsonlLogEntry = {
-				userId: segment.id,
-				displayName: userName,
+				userId,
+				displayName,
 				startTs: segment.capture_ts,
 				endTs: segment.end_ts,
 				origin: 'voice',
@@ -181,74 +170,58 @@ export class Session {
 			// any async error will trigger the stream 'error' handler and exit
 			this.logStream.write(JSON.stringify(out) + '\n');
 		}
+
+		// Update rolling context with recognized speech
+		if (segment.text) this.appendContext(segment.text);
 	};
 
 	private handleErrorMessage = async (err: ErrorMessage) => {
 		debug('Received error message from Python service:', err);
 	};
 
-	public handleWrapup = async (message: Message) => {
-		const requestId = message.id;
-		this.pendingWrapups.set(requestId, message);
-		debug(`Wrapup command handled. Request ID: ${requestId}`);
-
-		const entries = await this.readLogEntries();
-		// Use the timestamp of the first log entry if available; otherwise use current time
-		const startTs = entries && entries.length > 0 ? entries[0].startTs : Date.now() / 1000;
-		// Build wire entries, then apply configured username/phrase maps on the JS side
-		const transformed = entries.map((e) =>
-			toWrapupLogEntry(e, this.sessionInfo.userIdMap, this.sessionInfo.phraseMap),
-		);
-
-		const wrapupReq: WrapupRequestMessage = {
-			v: 1,
-			type: 'wrapup.request',
-			session_name: this.sessionInfo.sessionName,
-			start_ts: startTs,
-			log_entries: transformed,
-			request_id: requestId,
-			// userid_map/phrase_map applied in JS to avoid double application downstream
-			wrapup_prompt: this.sessionInfo.wrapupPrompt,
-			wrapup_tips: this.sessionInfo.wrapupTips,
-		};
-		this.websocketClient.send(wrapupReq);
-		debug('Sent wrapup request to Python service.');
-	};
-
-	private handleWrapupResponse = async (response: WrapupResponseMessage) => {
-		// Try to correlate using request_id if present
-		let message: Message | undefined;
-		debug('Received wrapup response:', response);
-		if ((response as any).request_id) {
-			message = this.pendingWrapups.get((response as any).request_id);
-			if (message) {
-				this.pendingWrapups.delete((response as any).request_id);
-				debug(`Found pending wrapup for request ID: ${(response as any).request_id}`);
-			}
-		}
-		if (!message) message = this.pendingWrapups.values().next().value;
-		if (!message) {
-			console.warn('Received a summary response with no pending wrapup command.');
-			debug('No pending wrapup command found for summary response.');
+	public handleWrapupCommand = async (message: Message) => {
+		debug(`Wrapup command handled.`);
+		const apiKey = this.sessionInfo.geminiApiKey || process.env.GEMINI_API_KEY || '';
+		if (!apiKey) {
+			try {
+				await message.reply('Wrapup requires GEMINI_API_KEY to be set.');
+			} catch {}
 			return;
 		}
 
-		// Write the raw outline unmodified to a markdown file and reply with the file attached.
 		try {
-			const wrapupsDir = this.sessionInfo.wrapupsPath;
-			paths.ensureDir(wrapupsDir);
-			const outPath = path.join(wrapupsDir, `${this.sessionInfo.sessionName}.md`);
-			// Write the outline exactly as received (no decoration)
-			fs.writeFileSync(outPath, response.outline, 'utf8');
-
-			const attachment = new AttachmentBuilder(Buffer.from(response.outline, 'utf-8'), {
-				name: `${this.sessionInfo.sessionName}.md`,
+			const outlineContent = await createWrapup({
+				logFilePath: this.logFilePath,
+				sessionName: this.sessionInfo.sessionName,
+				apiKey,
+				userIdMap: this.sessionInfo.userIdMap,
+				phraseMap: this.sessionInfo.phraseMap,
+				model: this.sessionInfo.wrapupModel,
+				prompt: this.sessionInfo.wrapupPrompt,
+				temperature: this.sessionInfo.wrapupTemperature,
+				maxOutputTokens: this.sessionInfo.wrapupMaxTokens,
+				tips: this.sessionInfo.wrapupTips,
 			});
 
+			if (!outlineContent) {
+				await message.reply('No session log yet. Say something first.');
+				return;
+			}
+
+			const attachment = new AttachmentBuilder(Buffer.from(outlineContent, 'utf-8'), {
+				name: `${this.sessionInfo.sessionName}.md`,
+			});
 			const replyContent = `Session wrap-up attached: ${this.sessionInfo.sessionName}`;
 			await message.reply({ content: replyContent, files: [attachment] });
-		} catch (e) {
-			console.error('Failed to send wrapup reply to Discord or write file:', e);
+		} catch (err: any) {
+			console.error('Wrapup generation failed:', err);
+			const reply =
+				err.message === 'No log entries found for session.'
+					? 'No session log yet. Say something first.'
+					: `Wrapup failed: ${err?.message || 'unknown error'}`;
+			try {
+				await message.reply(reply);
+			} catch {}
 		}
 	};
 
@@ -277,5 +250,30 @@ export class Session {
 	private async readLogEntries(): Promise<JsonlLogEntry[]> {
 		debug(`Reading log entries from: ${this.logFilePath}`);
 		return await readLogEntriesStrict(this.logFilePath);
+	}
+
+	// ---- Context helpers ----
+	private composePromptWithContext(): string | undefined {
+		const base = this.sessionInfo.asrPrompt?.trim();
+		const ctx = this.getContextText();
+		return [base, ctx].filter(Boolean).join(' ');
+	}
+
+	private appendContext(text: string) {
+		if (!text) return;
+		const tokens = text
+			.split(/\s+/)
+			.map((t) => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+			.filter((t) => t.length > 0);
+		if (tokens.length === 0) return;
+		this.contextWords.push(...tokens);
+		if (this.contextWords.length > this.maxContextWords) {
+			this.contextWords.splice(0, this.contextWords.length - this.maxContextWords);
+		}
+	}
+
+	private getContextText(): string {
+		if (this.contextWords.length === 0) return '';
+		return this.contextWords.slice(-this.maxContextWords).join(' ');
 	}
 }

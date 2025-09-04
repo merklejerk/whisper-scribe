@@ -117,13 +117,12 @@ class AsyncWhisperTranscriber:
 				# and apply per-job prompt override when provided.
 				whisper_cfg = self._cfg
 				generate_kwargs = {
-					'temperature': (0.0, 0.25, 0.33, 0.66),
+					'temperature': (0.0, 0.25, 0.5, 0.75),
 					'logprob_threshold': float(whisper_cfg.logprob_threshold),
 					'no_speech_threshold': float(whisper_cfg.no_speech_threshold),
 					'condition_on_prev_tokens': True,
 					'compression_ratio_threshold': 1.35,
 					'forced_decoder_ids': None,
-					'compression_ratio_threshold': 2.4
 				}
 				# Attach prompt ids based on per-job override only; cache per text
 				use_prompt = job.prompt

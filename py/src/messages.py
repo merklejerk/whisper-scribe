@@ -26,25 +26,7 @@ class AudioSegmentMessage(BaseMessage):
 	# Optional per-job ASR prompt override (Whisper system prompt)
 	prompt: Optional[str] = None
 
-class WrapupLogEntry(BaseModel):
-	"""Wire shape sent by Node for wrapup logs."""
-	user_name: str
-	start_ts: float
-	end_ts: float
-	text: str
-	user_id: str
-
-class WrapupRequestMessage(BaseMessage):
-	type: Literal['wrapup.request'] = 'wrapup.request'
-	session_name: str
-	start_ts: float
-	log_entries: List[WrapupLogEntry]
-	request_id: str
-	# Optional wrapup prompt and tips supplied by caller
-	wrapup_prompt: Optional[str] = None
-	wrapup_tips: Optional[List[str]] = None
-
-NodeToPy = Union[AudioSegmentMessage, WrapupRequestMessage]
+NodeToPy = Union[AudioSegmentMessage]
 
 # Python -> Node messages
 class TranscriptionMessage(BaseMessage):
@@ -54,18 +36,13 @@ class TranscriptionMessage(BaseMessage):
 	capture_ts: float
 	end_ts: float
 
-class WrapupResponseMessage(BaseMessage):
-	type: Literal['wrapup.response'] = 'wrapup.response'
-	outline: str
-	request_id: str
-
 class ErrorMessage(BaseMessage):
 	type: Literal['error'] = 'error'
 	code: str
 	message: str
 	details: Optional[str] = None
 
-PyToNode = Union[TranscriptionMessage, ErrorMessage, WrapupResponseMessage]
+PyToNode = Union[TranscriptionMessage, ErrorMessage]
 
 Incoming = NodeToPy
 Outgoing = PyToNode

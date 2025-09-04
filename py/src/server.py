@@ -15,7 +15,6 @@ import numpy as np
 from . import messages
 from .config import load_app_config
 from .transcriber import AsyncWhisperTranscriber, TranscribeJob, TranscriptionResult
-from .wrapup import generate_transcript, GeminiWrapupGenerator, LLMRequestError
 from .audio import normalize_to_mono16k, enhance_speech, TARGET_SR
 
 MAX_MSG_SIZE = 10 * 1024 * 1024
@@ -128,53 +127,6 @@ class WsServer:
 			prompt = self._user_prompt.get(msg.id)
 			job = TranscribeJob(id=job_id, pcm16=enhanced_pcm16, prompt=prompt)
 			await self.transcriber.submit(job)
-
-		elif msg_type == 'wrapup.request':
-			try:
-				msg = messages.WrapupRequestMessage(**obj)
-			except ValidationError as e:
-				await self._emit_error('bad_request', f'invalid wrapup.request: {e}')
-				return
-			base_cfg = load_app_config()
-			if base_cfg is None:
-				await self._emit_error('server_config', 'No configuration available')
-				return
-			if base_cfg.gemini_api_key is None:
-				await self._emit_error('missing_api_key', 'Gemini API key is not configured')
-				return
-
-			transcript = generate_transcript(
-				log_entries=msg.log_entries,
-				session_name=msg.session_name,
-			)
-			# Use Gemini-based wrapup generator; pass configured API key
-			generator = GeminiWrapupGenerator(
-				base_cfg.gemini_api_key,
-				base_cfg.wrapup.model,
-				prompt=(getattr(msg, 'wrapup_prompt', None) or base_cfg.wrapup.prompt),
-				temperature=base_cfg.wrapup.temperature,
-				max_output_tokens=base_cfg.wrapup.max_output_tokens,
-			)
-			try:
-				tips = getattr(msg, 'wrapup_tips', None)
-				outline = await generator.generate(transcript, tips=(list(tips) if tips is not None else list(base_cfg.wrapup.tips)))
-			except LLMRequestError as e:
-				# Preserve the original error code/message in the WS error reply
-				code = str(e.code) if hasattr(e, 'code') else 'llm_error'
-				message = e.message if hasattr(e, 'message') else str(e)
-				await self._emit_error(code, message)
-				return
-			else:
-				# Ensure outline is a string for the response model
-				if outline is None:
-					outline = ""
-				response = messages.WrapupResponseMessage(
-					v=1,
-					type='wrapup.response',
-					outline=outline,
-					request_id=msg.request_id,
-				)
-				await self.emit(response)
 
 		else:
 			await self._emit_error('unknown_type', f"unknown message type: {msg_type!r}")

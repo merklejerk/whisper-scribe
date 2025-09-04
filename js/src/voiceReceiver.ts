@@ -6,6 +6,7 @@ import {
 } from '@discordjs/voice';
 import prism from 'prism-media';
 import { resampleLinear, downmixToMono, nowEpoch, rmsDbFs } from './audioUtils.js';
+import { debug } from './debug.js';
 import { WebRtcVad, VADMode, VADEvent } from './vad.js';
 
 // Discord supplies Opus packets; we use the @discordjs/voice receiver which gives us PCM 16-bit LE stereo 48kHz frames.
@@ -62,7 +63,16 @@ export class PerUserVoiceSegmenter {
 	private users = new Map<string, UserBuf>();
 	private _flushing = false;
 
-	constructor(private opts: SegmenterOptions) {}
+	constructor(private opts: SegmenterOptions) {
+		debug(
+			'PerUserVoiceSegmenter created (vadFrameMs=%s, thresh=%s dB, silenceGapMs=%s, minSegmentMs=%s, maxSegmentMs=%s)',
+			String(opts.vadFrameMs ?? 30),
+			String(opts.vadDbThreshold ?? -45),
+			String(opts.silenceGapMs ?? 1250),
+			String(opts.minSegmentMs ?? 200),
+			String(opts.maxSegmentMs ?? 30000),
+		);
+	}
 
 	pushStereo48(userId: string, pcmStereo48: Int16Array) {
 		// Convert: stereo 48k -> mono -> resample to target SR, then buffer
@@ -83,6 +93,7 @@ export class PerUserVoiceSegmenter {
 				inQueue: [],
 			};
 			this.users.set(userId, state);
+			debug('segmenter: new user state created user=%s', userId);
 		}
 
 		state.inQueue.push(monoTgt);
@@ -120,7 +131,7 @@ export class PerUserVoiceSegmenter {
 
 					if (!state.inSpeech) {
 						if (active) {
-							this._startSegment(state);
+							this._startSegment(uid, state);
 							this._appendActiveFrame(state, frame);
 						}
 						continue;
@@ -196,7 +207,7 @@ export class PerUserVoiceSegmenter {
 		return work;
 	}
 
-	private _startSegment(state: UserBuf) {
+	private _startSegment(userId: string, state: UserBuf) {
 		state.inSpeech = true;
 		state.startedTs = nowEpoch();
 		state.frames = [];
@@ -205,6 +216,7 @@ export class PerUserVoiceSegmenter {
 		state.silenceSamples = 0;
 		state.pendingSilence = [];
 		state.pendingSilenceSamples = 0;
+		debug('segmenter: start segment user=%s ts=%s', userId, String(state.startedTs));
 	}
 
 	private _appendActiveFrame(state: UserBuf, frame: Int16Array) {
@@ -289,6 +301,12 @@ export class PerUserVoiceSegmenter {
 			durationMs,
 			pcm16: data,
 		};
+		debug(
+			'segmenter: finalize segment user=%s idx=%s durMs=%s',
+			userId,
+			String(segment.index),
+			String(durationMs),
+		);
 		// Reset state for next segment
 		this._resetSpeechState(state);
 		// Do not clear carry; it belongs to stream-level framing
@@ -327,7 +345,7 @@ export async function attachVoiceReceiver(
 	speaking.on('start', (userId: string) => {
 		if (activeDecoders.has(userId)) return;
 		const opusStream = connection.receiver.subscribe(userId, {
-			end: { behavior: EndBehaviorType.AfterSilence, duration: 150 },
+			end: { behavior: EndBehaviorType.AfterInactivity, duration: 250 },
 		});
 		const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
 		activeDecoders.set(userId, decoder);
@@ -338,6 +356,7 @@ export async function attachVoiceReceiver(
 			segmenter.pushStereo48(userId, int16);
 		});
 		const cleanup = () => {
+			debug(`Stream closed for user ${userId}`);
 			decoder.removeAllListeners('data');
 			decoder.destroy();
 			activeDecoders.delete(userId);

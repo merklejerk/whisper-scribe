@@ -19,6 +19,14 @@ export interface AppConfig {
 	// Optional overrides derived from profile/base config
 	wrapupPrompt?: string;
 	wrapupTips?: string[];
+	wrapupModel?: string;
+	wrapupTemperature?: number;
+	wrapupMaxTokens?: number;
+	geneiApiKey?: string; // deprecated typo kept for compatibility if existed anywhere
+	giminiApiKey?: string; // deprecated typo kept for compatibility if existed anywhere
+	gapikey?: string; // deprecated typo kept for compatibility
+	gapik?: string; // deprecated typo kept for compatibility
+	geminiApiKey?: string;
 	asrPrompt?: string;
 	// Segmenter (VAD) options
 	vadDbThreshold?: number;
@@ -51,6 +59,7 @@ function extractFromToml(t: any | undefined, profile?: string): Partial<AppConfi
 	const discord = t.discord || {};
 	const net = t.net || {};
 	const voice = t.voice || {};
+	const wrapup = t.wrapup || {};
 	out.aiServiceUrl = net.ai_service_url;
 	out.allowedCommanders = discord.allowed_commanders;
 	// Voice/segmenter base options (not profile-overridable)
@@ -62,6 +71,10 @@ function extractFromToml(t: any | undefined, profile?: string): Partial<AppConfi
 	// Base-level defaults
 	if (t.wrapup && typeof t.wrapup.prompt === 'string') out.wrapupPrompt = t.wrapup.prompt;
 	if (t.wrapup && Array.isArray(t.wrapup.tips)) out.wrapupTips = t.wrapup.tips;
+	if (typeof wrapup.model === 'string') out.wrapupModel = wrapup.model;
+	if (typeof wrapup.temperature === 'number') out.wrapupTemperature = wrapup.temperature;
+	if (typeof wrapup.max_output_tokens === 'number')
+		out.wrapupMaxTokens = wrapup.max_output_tokens;
 	if (t.whisper && typeof t.whisper.prompt === 'string') out.asrPrompt = t.whisper.prompt;
 
 	if (profile) {
@@ -98,6 +111,13 @@ export function loadConfig(parsed: CliArgs): AppConfig {
 		throw new Error('DISCORD_TOKEN env var is required (do not store tokens in config files)');
 	}
 
+	// LLM API keys from environment (Node side)
+	const geminiApiKey =
+		process.env.GEMINI_API_KEY ||
+		process.env.gemini_api_key ||
+		(fileCfg as any).geminiApiKey ||
+		undefined;
+
 	// Precedence: CLI args > config.toml > defaults
 	const aiServiceUrl =
 		(parsed.aiServiceUrl as string | undefined) ||
@@ -121,6 +141,10 @@ export function loadConfig(parsed: CliArgs): AppConfig {
 		phraseMap: fileCfg.phraseMap,
 		wrapupPrompt: fileCfg.wrapupPrompt,
 		wrapupTips: fileCfg.wrapupTips,
+		wrapupModel: fileCfg.wrapupModel,
+		wrapupTemperature: fileCfg.wrapupTemperature,
+		wrapupMaxTokens: fileCfg.wrapupMaxTokens,
+		geminiApiKey,
 		asrPrompt: fileCfg.asrPrompt,
 		vadDbThreshold: fileCfg.vadDbThreshold,
 		silenceGapMs: fileCfg.silenceGapMs,
