@@ -53,30 +53,6 @@ export interface WrapupLogEntry {
 	user_id: string;
 }
 
-// Convert stored JSONL entries (camelCase internal) into wire shape for wrapup,
-// applying optional userid->alias mapping and phrase substitutions.
-export function toWrapupLogEntry(
-	entry: JsonlLogEntry,
-	userIdMap?: Record<string, string>,
-	phraseMap?: Record<string, string>,
-): WrapupLogEntry {
-	const alias = userIdMap?.[entry.userId];
-	let text = entry.text;
-	if (phraseMap && Object.keys(phraseMap).length) {
-		for (const [src, dst] of Object.entries(phraseMap)) {
-			if (!src) continue;
-			text = text.replaceAll(src, dst);
-		}
-	}
-	return {
-		user_name: alias ?? entry.displayName,
-		start_ts: entry.startTs,
-		end_ts: entry.endTs,
-		text,
-		user_id: entry.userId,
-	};
-}
-
 // --- Runtime validation schemas (subset) ---
 const base = z.object({ v: z.number(), type: z.string() });
 export const transcriptionSchema = base.extend({

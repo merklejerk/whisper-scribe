@@ -19,22 +19,21 @@ function ensureDir(dirPath: string): void {
 	}
 }
 
-
 // New unified data directory helpers
 function dataRoot(): string {
-    return resolveRoot('data');
+	return resolveRoot('data');
 }
 
 function sessionDataDir(sessionName: string): string {
-    return path.join(dataRoot(), sessionName);
+	return path.join(dataRoot(), sessionName);
 }
 
 function sessionLogPath(sessionName: string): string {
-    return path.join(sessionDataDir(sessionName), 'log.jsonl');
+	return path.join(sessionDataDir(sessionName), 'log.jsonl');
 }
 
 function sessionWrapupPath(sessionName: string): string {
-    return path.join(sessionDataDir(sessionName), 'wrapup.md');
+	return path.join(sessionDataDir(sessionName), 'wrapup.md');
 }
 
 export default {

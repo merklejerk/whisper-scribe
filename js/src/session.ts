@@ -10,6 +10,7 @@ import { PythonWsClient } from './websocketClient.js';
 import { Message, AttachmentBuilder } from 'discord.js';
 import { debug } from './debug.js';
 import { createWrapup } from './wrapup.js';
+import { createSessionGist } from './gist.js';
 
 export interface SessionConfig {
 	sessionId: string;
@@ -23,13 +24,17 @@ export interface SessionConfig {
 	phraseMap?: Record<string, string>;
 	wrapupPrompt?: string;
 	wrapupTips?: string[];
+	wrapupVocabulary?: string[];
 	wrapupModel?: string;
 	wrapupTemperature?: number;
 	wrapupMaxTokens?: number;
 	geminiApiKey?: string;
+	githubToken?: string;
 	asrPrompt?: string;
 	// Rolling ASR context configuration (optional)
 	asrContextWords?: number; // default 40
+	prevSessionName?: string; // optional previous session to include prior wrapup
+	gist?: boolean; // if true, upload gist on !wrapup
 }
 
 export class Session {
@@ -153,7 +158,9 @@ export class Session {
 			this.sessionInfo.guildId,
 		);
 		const displayName = display && display.length ? display : userId;
-		debug(`Received ${(segment.end_ts - segment.capture_ts).toFixed(1)}s transcription from ${displayName}\n > "${segment.text}"\n  `);
+		debug(
+			`Received ${(segment.end_ts - segment.capture_ts).toFixed(1)}s transcription from ${displayName}\n > "${segment.text}"\n  `,
+		);
 		// Append JSONL line to log file
 		if (this.logStream) {
 			const out: JsonlLogEntry = {
@@ -192,11 +199,13 @@ export class Session {
 				apiKey,
 				userIdMap: this.sessionInfo.userIdMap,
 				phraseMap: this.sessionInfo.phraseMap,
+				vocabulary: this.sessionInfo.wrapupVocabulary,
 				model: this.sessionInfo.wrapupModel,
 				prompt: this.sessionInfo.wrapupPrompt,
 				temperature: this.sessionInfo.wrapupTemperature,
 				maxOutputTokens: this.sessionInfo.wrapupMaxTokens,
 				tips: this.sessionInfo.wrapupTips,
+				prevSessionName: this.sessionInfo.prevSessionName,
 			});
 
 			if (!outlineContent) {
@@ -216,6 +225,21 @@ export class Session {
 			}
 			const replyContent = `Session wrap-up attached: ${this.sessionInfo.sessionName}`;
 			await message.reply({ content: replyContent, files: [attachment] });
+
+			// Optionally upload to a private gist
+			if (this.sessionInfo.gist) {
+				try {
+					const url = await createSessionGist(this.sessionInfo.sessionName, {
+						token: this.sessionInfo.githubToken || process.env.GITHUB_TOKEN,
+					});
+					await message.reply(`Gist created: ${url}`);
+				} catch (e: any) {
+					console.error('Gist upload failed:', e);
+					try {
+						await message.reply(`Gist upload failed: ${e?.message || e}`);
+					} catch {}
+				}
+			}
 		} catch (err: any) {
 			console.error('Wrapup generation failed:', err);
 			const reply =

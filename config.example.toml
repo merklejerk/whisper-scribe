@@ -44,6 +44,11 @@ min_segment_ms = 200
 model = "gpt-4o-mini"
 # List of tips for the wrapup LLM.
 tips = []
+# Domain vocabulary: proper nouns and phrases to help correct STT errors (e.g., names, places).
+vocabulary = [
+	# "Jörgen",
+	# "Skotadinos",
+]
 # System prompt used to generate session outlines. If empty, a sensible default is used.
 prompt = ""
 # Gemini generation params
@@ -61,6 +66,7 @@ max_output_tokens = 10240
 #   whisper_prompt = "..."              # overrides [whisper].prompt
 #   wrapup_prompt = "..."               # overrides [wrapup].prompt
 #   wrapup_tips = ["...", "..."]        # merged with root [wrapup].tips
+#   wrapup_vocabulary = ["...", "..."]  # overrides root [wrapup].vocabulary
 #   allowed_commanders = ["..."]        # merged with root [discord].allowed_commanders
 #   [profile.xyz.userid_map]            # merged onto root [userid_map]
 #   [profile.xyz.phrase_map]            # merged onto root [phrase_map]
@@ -72,6 +78,7 @@ wrapup_prompt = "Summarize the session with focus on puzzles and clues."
 wrapup_tips = [
 	"Use character aliases: George/Jörgen/Lawrence",
 ]
+wrapup_vocabulary = ["Jörgen", "Skotadinos"]
 
 [profile.example.userid_map]
 "123456789012345678" = "George/Jörgen/Lawrence"

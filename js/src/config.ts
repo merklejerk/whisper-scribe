@@ -18,10 +18,12 @@ export interface AppConfig {
 	// Optional overrides derived from profile/base config
 	wrapupPrompt?: string;
 	wrapupTips?: string[];
+	wrapupVocabulary?: string[];
 	wrapupModel?: string;
 	wrapupTemperature?: number;
 	wrapupMaxTokens?: number;
 	geminiApiKey?: string;
+	githubToken?: string;
 	asrPrompt?: string;
 	// Segmenter (VAD) options
 	vadDbThreshold?: number;
@@ -66,6 +68,7 @@ function extractFromToml(t: any | undefined, profile?: string): Partial<AppConfi
 	// Base-level defaults
 	if (t.wrapup && typeof t.wrapup.prompt === 'string') out.wrapupPrompt = t.wrapup.prompt;
 	if (t.wrapup && Array.isArray(t.wrapup.tips)) out.wrapupTips = t.wrapup.tips;
+	if (t.wrapup && Array.isArray(t.wrapup.vocabulary)) out.wrapupVocabulary = t.wrapup.vocabulary;
 	if (typeof wrapup.model === 'string') out.wrapupModel = wrapup.model;
 	if (typeof wrapup.temperature === 'number') out.wrapupTemperature = wrapup.temperature;
 	if (typeof wrapup.max_output_tokens === 'number')
@@ -84,6 +87,10 @@ function extractFromToml(t: any | undefined, profile?: string): Partial<AppConfi
 			// Merge tips.
 			if (Array.isArray(p.wrapup_tips)) {
 				out.wrapupTips = [...(out.wrapupTips ?? []), ...p.wrapup_tips];
+			}
+			// Override vocabulary if provided at profile level.
+			if (Array.isArray(p.wrapup_vocabulary)) {
+				out.wrapupVocabulary = p.wrapup_vocabulary;
 			}
 			// Merge userid_map.
 			out.userIdMap = { ...(t.userid_map || {}), ...(p.userid_map || {}) };
@@ -108,7 +115,13 @@ export function loadConfig(parsed: CliArgs): AppConfig {
 
 	// LLM API keys from environment (Node side)
 	const geminiApiKey =
-		process.env.GEMINI_API_KEY || process.env.gemini_api_key || (fileCfg as any).geminiApiKey || undefined;
+		process.env.GEMINI_API_KEY ||
+		process.env.gemini_api_key ||
+		(fileCfg as any).geminiApiKey ||
+		undefined;
+
+	// GitHub token from environment (for gist uploads)
+	const githubToken = process.env.GITHUB_TOKEN || undefined;
 
 	// Precedence: CLI args > config.toml > defaults
 	const aiServiceUrl =
@@ -131,10 +144,12 @@ export function loadConfig(parsed: CliArgs): AppConfig {
 		phraseMap: fileCfg.phraseMap,
 		wrapupPrompt: fileCfg.wrapupPrompt,
 		wrapupTips: fileCfg.wrapupTips,
+		wrapupVocabulary: fileCfg.wrapupVocabulary,
 		wrapupModel: fileCfg.wrapupModel,
 		wrapupTemperature: fileCfg.wrapupTemperature,
 		wrapupMaxTokens: fileCfg.wrapupMaxTokens,
 		geminiApiKey,
+		githubToken,
 		asrPrompt: fileCfg.asrPrompt,
 		vadDbThreshold: fileCfg.vadDbThreshold,
 		silenceGapMs: fileCfg.silenceGapMs,

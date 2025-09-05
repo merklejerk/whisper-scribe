@@ -18,6 +18,8 @@ export interface RunBotOptions {
 	sessionName?: string;
 	allowedCommanders?: string[];
 	profile?: string;
+	prevSessionName?: string; // optional previous session for wrapup context
+	gist?: boolean; // if true, !wrapup uploads a private gist
 }
 
 export async function runBot(opts: RunBotOptions) {
@@ -77,11 +79,15 @@ export async function runBot(opts: RunBotOptions) {
 				phraseMap: cfg.phraseMap,
 				wrapupPrompt: cfg.wrapupPrompt,
 				wrapupTips: cfg.wrapupTips,
+				wrapupVocabulary: cfg.wrapupVocabulary,
 				wrapupModel: cfg.wrapupModel,
 				wrapupTemperature: cfg.wrapupTemperature,
 				wrapupMaxTokens: cfg.wrapupMaxTokens,
 				geminiApiKey: cfg.geminiApiKey,
+				githubToken: cfg.githubToken,
 				asrPrompt: cfg.asrPrompt,
+				prevSessionName: opts.prevSessionName,
+				gist: opts.gist === true,
 			});
 
 			const connection = joinVoiceChannel({

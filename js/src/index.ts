@@ -5,6 +5,7 @@ import { readLogEntriesStrict, formatLogLines } from './logs.js';
 import { runBot } from './bot.js';
 import { createWrapup } from './wrapup.js';
 import { loadConfig } from './config.js';
+import { createSessionGist } from './gist.js';
 
 async function showLog(sessionName: string) {
 	const logFilePath = paths.sessionLogPath(sessionName);
@@ -13,9 +14,14 @@ async function showLog(sessionName: string) {
 	console.log(text || '(empty)');
 }
 
-async function generateWrapup(sessionName: string, forceNew?: boolean, profile?: string) {
+async function generateWrapup(
+	sessionName: string,
+	forceNew?: boolean,
+	profile?: string,
+	prevSessionName?: string,
+	gist?: boolean,
+) {
 	const appCfg = loadConfig({ aiServiceUrl: undefined, profile });
-	const logFilePath = paths.sessionLogPath(sessionName);
 
 	const apiKey = appCfg.geminiApiKey || process.env.GEMINI_API_KEY;
 	if (!apiKey) {
@@ -35,17 +41,23 @@ async function generateWrapup(sessionName: string, forceNew?: boolean, profile?:
 			maxOutputTokens: appCfg.wrapupMaxTokens,
 			tips: appCfg.wrapupTips,
 			forceNew,
+			prevSessionName,
 		});
 
 		// Always written by createWrapup; CLI prints to stdout
 		console.log(outline);
-	} catch (err: any) {
-		if (err.message === 'No log entries found for session.') {
-			console.error('No log found for that session.');
-		} else {
-			console.error(`Wrapup failed: ${err?.message || 'unknown error'}`);
+
+		if (gist) {
+			const url = await createSessionGist(sessionName, {
+				token: appCfg.githubToken || process.env.GITHUB_TOKEN,
+			});
+			console.log(`Gist created: ${url}`);
 		}
-		process.exit(1);
+	} catch (err: any) {
+		if (err.message !== 'No log entries found for session.') {
+			throw err;
+		}
+		console.error('No log found for that session.');
 	}
 }
 
@@ -76,6 +88,17 @@ async function main() {
 						type: 'string',
 						describe: 'Session name for logging',
 					})
+					.option('prev-session', {
+						alias: 'P',
+						type: 'string',
+						describe:
+							'Optional previous session name whose wrapup should be used as context',
+					})
+					.option('gist', {
+						type: 'boolean',
+						describe: 'Enable uploading wrapup/log to a private GitHub gist on !wrapup',
+						default: false,
+					})
 					.option('allowed-commanders', {
 						alias: 'c',
 						type: 'array',
@@ -90,6 +113,8 @@ async function main() {
 					sessionName: argv.sessionName,
 					allowedCommanders: argv.allowedCommanders,
 					profile: argv.profile as string | undefined,
+					prevSessionName: argv.prevSession as string | undefined,
+					gist: (argv.gist as boolean | undefined) || false,
 				});
 			},
 		)
@@ -127,6 +152,17 @@ async function main() {
 						type: 'boolean',
 						describe: 'Force generate a new wrapup ignoring the cached version',
 						default: false,
+					})
+					.option('prev-session', {
+						alias: 'P',
+						type: 'string',
+						describe:
+							'Optional previous session name whose wrapup should be used as context',
+					})
+					.option('gist', {
+						type: 'boolean',
+						describe: 'Upload wrapup.md and log.jsonl to a private GitHub gist',
+						default: false,
 					});
 			},
 			async (argv) => {
@@ -134,6 +170,8 @@ async function main() {
 					argv.session,
 					argv.new as boolean | undefined,
 					argv.profile as string | undefined,
+					argv.prevSession as string | undefined,
+					argv.gist as boolean | undefined,
 				);
 			},
 		)
