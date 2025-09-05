@@ -1,25 +1,21 @@
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import path from 'path';
-import fs from 'fs';
 import paths from './paths.js';
 import { readLogEntriesStrict, formatLogLines } from './logs.js';
 import { runBot } from './bot.js';
-import { toWrapupLogEntry } from './messages.js';
 import { createWrapup } from './wrapup.js';
 import { loadConfig } from './config.js';
 
 async function showLog(sessionName: string) {
-	const logsDir = loadConfig({}).logsPath; // will throw if DISCORD_TOKEN missing; acceptable for CLI
-	const logFilePath = path.join(logsDir, `${sessionName}.jsonl`);
+	const logFilePath = paths.sessionLogPath(sessionName);
 	const entries = await readLogEntriesStrict(logFilePath);
 	const text = formatLogLines(entries);
 	console.log(text || '(empty)');
 }
 
-async function generateWrapup(sessionName: string, writeOut?: boolean, profile?: string) {
+async function generateWrapup(sessionName: string, forceNew?: boolean, profile?: string) {
 	const appCfg = loadConfig({ aiServiceUrl: undefined, profile });
-	const logFilePath = path.join(appCfg.logsPath, `${sessionName}.jsonl`);
+	const logFilePath = paths.sessionLogPath(sessionName);
 
 	const apiKey = appCfg.geminiApiKey || process.env.GEMINI_API_KEY;
 	if (!apiKey) {
@@ -29,7 +25,6 @@ async function generateWrapup(sessionName: string, writeOut?: boolean, profile?:
 
 	try {
 		const outline = await createWrapup({
-			logFilePath,
 			sessionName,
 			apiKey,
 			userIdMap: appCfg.userIdMap,
@@ -39,17 +34,11 @@ async function generateWrapup(sessionName: string, writeOut?: boolean, profile?:
 			temperature: appCfg.wrapupTemperature,
 			maxOutputTokens: appCfg.wrapupMaxTokens,
 			tips: appCfg.wrapupTips,
+			forceNew,
 		});
 
-		if (writeOut) {
-			const wrapupsDir = appCfg.wrapupsPath;
-			paths.ensureDir(wrapupsDir);
-			const outPath = path.join(wrapupsDir, `${sessionName}.md`);
-			fs.writeFileSync(outPath, outline, 'utf8');
-			console.log(`Wrote wrapup to: ${outPath}`);
-		} else {
-			console.log(outline);
-		}
+		// Always written by createWrapup; CLI prints to stdout
+		console.log(outline);
 	} catch (err: any) {
 		if (err.message === 'No log entries found for session.') {
 			console.error('No log found for that session.');
@@ -105,7 +94,7 @@ async function main() {
 			},
 		)
 		.command(
-			'log',
+			'log <session>',
 			'Print formatted log for a session',
 			(yargs) => {
 				return yargs.positional('session', {
@@ -120,7 +109,7 @@ async function main() {
 		)
 		.command(
 			'wrapup <session>',
-			'Generate wrapup files for a recorded session (writes to wrapups/)',
+			'Generate or print a wrapup for a recorded session (cached under data/<session>/wrapup.md)',
 			(yargs) => {
 				return yargs
 					.positional('session', {
@@ -133,17 +122,17 @@ async function main() {
 						type: 'string',
 						describe: 'Optional profile name to apply config overrides',
 					})
-					.option('output', {
-						alias: 'O',
+					.option('new', {
+						alias: 'n',
 						type: 'boolean',
-						describe:
-							'Write wrapup to wrapups/<session>.md instead of printing to stdout',
+						describe: 'Force generate a new wrapup ignoring the cached version',
+						default: false,
 					});
 			},
 			async (argv) => {
 				await generateWrapup(
 					argv.session,
-					argv.output as boolean | undefined,
+					argv.new as boolean | undefined,
 					argv.profile as string | undefined,
 				);
 			},

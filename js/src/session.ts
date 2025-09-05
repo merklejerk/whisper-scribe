@@ -18,8 +18,6 @@ export interface SessionConfig {
 	sessionName: string;
 	aiServiceUrl: string;
 	userDirectory: UserDirectory;
-	logsPath: string;
-	wrapupsPath: string;
 	profile?: string;
 	userIdMap?: Record<string, string>;
 	phraseMap?: Record<string, string>;
@@ -58,10 +56,9 @@ export class Session {
 			}
 		});
 
-		// Ensure logs directory exists (project root /logs)
-		const logsDir = this.sessionInfo.logsPath;
-		paths.ensureDir(logsDir);
-		this.logFilePath = path.join(logsDir, `${this.sessionInfo.sessionId}.jsonl`);
+		const sessionDir = paths.sessionDataDir(this.sessionInfo.sessionName);
+		paths.ensureDir(sessionDir);
+		this.logFilePath = path.join(sessionDir, 'log.jsonl');
 		this.logStream = fs.createWriteStream(this.logFilePath, { flags: 'a', encoding: 'utf8' });
 		// Fail fast on any file stream error — we own consistency for session logs
 		this.logStream.on('error', (err) => {
@@ -191,7 +188,6 @@ export class Session {
 
 		try {
 			const outlineContent = await createWrapup({
-				logFilePath: this.logFilePath,
 				sessionName: this.sessionInfo.sessionName,
 				apiKey,
 				userIdMap: this.sessionInfo.userIdMap,
@@ -208,9 +204,16 @@ export class Session {
 				return;
 			}
 
-			const attachment = new AttachmentBuilder(Buffer.from(outlineContent, 'utf-8'), {
-				name: `${this.sessionInfo.sessionName}.md`,
-			});
+			// Ensure we send the cached file path if available
+			const wrapupPath = paths.sessionWrapupPath(this.sessionInfo.sessionName);
+			let attachment: AttachmentBuilder;
+			if (fs.existsSync(wrapupPath)) {
+				attachment = new AttachmentBuilder(wrapupPath);
+			} else {
+				attachment = new AttachmentBuilder(Buffer.from(outlineContent, 'utf-8'), {
+					name: `${this.sessionInfo.sessionName}.md`,
+				});
+			}
 			const replyContent = `Session wrap-up attached: ${this.sessionInfo.sessionName}`;
 			await message.reply({ content: replyContent, files: [attachment] });
 		} catch (err: any) {

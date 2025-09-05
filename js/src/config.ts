@@ -11,8 +11,7 @@ export interface AppConfig {
 	discordToken: string;
 	aiServiceUrl: string; // ws://host:port
 	allowedCommanders: string[];
-	logsPath: string;
-	wrapupsPath: string;
+	dataRoot: string; // new unified data root
 	profile?: string;
 	userIdMap?: Record<string, string>;
 	phraseMap?: Record<string, string>;
@@ -22,10 +21,6 @@ export interface AppConfig {
 	wrapupModel?: string;
 	wrapupTemperature?: number;
 	wrapupMaxTokens?: number;
-	geneiApiKey?: string; // deprecated typo kept for compatibility if existed anywhere
-	giminiApiKey?: string; // deprecated typo kept for compatibility if existed anywhere
-	gapikey?: string; // deprecated typo kept for compatibility
-	gapik?: string; // deprecated typo kept for compatibility
 	geminiApiKey?: string;
 	asrPrompt?: string;
 	// Segmenter (VAD) options
@@ -113,10 +108,7 @@ export function loadConfig(parsed: CliArgs): AppConfig {
 
 	// LLM API keys from environment (Node side)
 	const geminiApiKey =
-		process.env.GEMINI_API_KEY ||
-		process.env.gemini_api_key ||
-		(fileCfg as any).geminiApiKey ||
-		undefined;
+		process.env.GEMINI_API_KEY || process.env.gemini_api_key || (fileCfg as any).geminiApiKey || undefined;
 
 	// Precedence: CLI args > config.toml > defaults
 	const aiServiceUrl =
@@ -126,16 +118,14 @@ export function loadConfig(parsed: CliArgs): AppConfig {
 	const allowedCommanders =
 		(parsed.allowedCommanders as string[] | undefined) || fileCfg.allowedCommanders || [];
 
-	// Compute frequently-used absolute paths once
-	const logsPath = paths.resolveRoot('logs');
-	const wrapupsPath = paths.resolveRoot('wrapups');
+	// Compute absolute paths
+	const dataRoot = paths.dataRoot();
 
 	return {
 		discordToken,
 		aiServiceUrl,
 		allowedCommanders,
-		logsPath,
-		wrapupsPath,
+		dataRoot,
 		profile: fileCfg.profile,
 		userIdMap: fileCfg.userIdMap,
 		phraseMap: fileCfg.phraseMap,

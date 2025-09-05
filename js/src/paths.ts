@@ -19,13 +19,30 @@ function ensureDir(dirPath: string): void {
 	}
 }
 
-function logsPath(filename: string): string {
-	return resolveRoot('logs', filename);
+
+// New unified data directory helpers
+function dataRoot(): string {
+    return resolveRoot('data');
+}
+
+function sessionDataDir(sessionName: string): string {
+    return path.join(dataRoot(), sessionName);
+}
+
+function sessionLogPath(sessionName: string): string {
+    return path.join(sessionDataDir(sessionName), 'log.jsonl');
+}
+
+function sessionWrapupPath(sessionName: string): string {
+    return path.join(sessionDataDir(sessionName), 'wrapup.md');
 }
 
 export default {
 	projectRoot,
 	resolveRoot,
 	ensureDir,
-	logsPath,
+	dataRoot,
+	sessionDataDir,
+	sessionLogPath,
+	sessionWrapupPath,
 };

@@ -1,6 +1,9 @@
 import type { WrapupLogEntry } from './messages.js';
 import { readLogEntriesStrict } from './logs.js';
 import { toWrapupLogEntry } from './messages.js';
+import fs from 'fs';
+import path from 'path';
+import paths from './paths.js';
 
 export const DEFAULT_PROMPT = `
 You will be given a raw voice chat transcript of a D&D 5e game session.
@@ -25,10 +28,10 @@ export function generateTranscript(logEntries: WrapupLogEntry[], sessionName: st
 }
 
 export interface WrapupOptions extends GeminiOptions {
-	logFilePath: string;
 	sessionName: string;
 	userIdMap?: Record<string, string>;
 	phraseMap?: Record<string, string>;
+	forceNew?: boolean; // if true, regenerate even if wrapup exists
 }
 
 /**
@@ -39,7 +42,17 @@ export interface WrapupOptions extends GeminiOptions {
  * @throws An error if logs are empty or the API key is missing.
  */
 export async function createWrapup(opts: WrapupOptions): Promise<string> {
-	const entries = await readLogEntriesStrict(opts.logFilePath);
+	// Determine session directory and wrapup path
+	const sessionDir = paths.sessionDataDir(opts.sessionName);
+	paths.ensureDir(sessionDir);
+	const wrapupPath = path.join(sessionDir, 'wrapup.md');
+
+	// If exists and not forcing regeneration, return it immediately (no API key required)
+	if (!opts.forceNew && fs.existsSync(wrapupPath)) {
+        return fs.readFileSync(wrapupPath, 'utf8');
+	}
+
+	const entries = await readLogEntriesStrict(paths.sessionLogPath(opts.sessionName));
 	if (!entries.length) {
 		// Let callers handle this case with user-facing messages
 		throw new Error('No log entries found for session.');
@@ -60,7 +73,9 @@ export async function createWrapup(opts: WrapupOptions): Promise<string> {
 		tips: opts.tips,
 	});
 
-	return outline ?? '';
+	const finalText = outline ?? '';
+    fs.writeFileSync(wrapupPath, finalText, 'utf8');
+	return finalText;
 }
 
 export interface GeminiOptions {

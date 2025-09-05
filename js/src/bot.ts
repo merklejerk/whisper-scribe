@@ -71,8 +71,6 @@ export async function runBot(opts: RunBotOptions) {
 				voiceChannelId: voiceChannel.id,
 				sessionName: opts.sessionName || sessionId,
 				aiServiceUrl: cfg.aiServiceUrl,
-				logsPath: cfg.logsPath,
-				wrapupsPath: cfg.wrapupsPath,
 				userDirectory,
 				profile: cfg.profile,
 				userIdMap: cfg.userIdMap,
