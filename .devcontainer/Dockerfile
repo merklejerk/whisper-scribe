@@ -23,10 +23,14 @@ RUN if getent passwd 1000 > /dev/null 2>&1; then \
 # Install any additional system dependencies if needed (e.g., git, curl)
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    jq curl ca-certificates file vim less python3-dev python3-full build-essential git cmake gcc-12 rsync \
+    jq curl ca-certificates file vim less python3-dev python3-full build-essential git cmake gcc-12 rsync nodejs npm \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu pip install --no-cache-dir uv llama-cpp-python bitsandbytes==0.46.1
 
+# Install nvm and set up Node.js
+RUN su - $USERNAME -c 'curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh" | bash' \
+    && su - $USERNAME -c 'source ~/.nvm/nvm.sh && nvm install lts/iron && nvm alias default lts/iron'
+    
 # Set the working directory
 WORKDIR /workspace
