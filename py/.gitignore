@@ -4,4 +4,5 @@ logs/
 wrapups/
 __pycache__
 debug.wav
+/.pytest_cache
 /.venv
