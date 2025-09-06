@@ -1,0 +1,75 @@
+// IPC message shapes used with the Python ASR service.
+import { z } from 'zod';
+import type { JsonlLogEntry } from './logs.js';
+
+export interface BaseMessage {
+	v: 1;
+	type: string;
+}
+
+export interface AudioSegmentMessage extends BaseMessage {
+	type: 'audio.segment';
+	id: string;
+	index: number;
+	pcm_format: { sr: number; channels: number; sample_width: number };
+	started_ts: number;
+	capture_ts: number;
+	data_b64: string; // base64 encoded PCM16 LE mono frames
+	// Optional per-job Whisper prompt override
+	prompt?: string;
+}
+
+export interface TranscriptionMessage extends BaseMessage {
+	type: 'transcription';
+	id: string;
+	text: string;
+	capture_ts: number;
+	end_ts: number;
+}
+
+export interface WrapupResponseMessage extends BaseMessage {
+	type: 'wrapup.response';
+	outline: string;
+	request_id: string;
+}
+
+export interface ErrorMessage extends BaseMessage {
+	type: 'error';
+	code: string;
+	message: string;
+	details?: any;
+}
+
+export type InboundFromPython = TranscriptionMessage | ErrorMessage;
+
+export type OutboundToPython = AudioSegmentMessage;
+
+// Wire shape sent to Python summarizer (snake_case, minimal fields)
+export interface WrapupLogEntry {
+	user_name: string;
+	start_ts: number;
+	end_ts: number;
+	text: string;
+	user_id: string;
+}
+
+// --- Runtime validation schemas (subset) ---
+const base = z.object({ v: z.number(), type: z.string() });
+export const transcriptionSchema = base.extend({
+	type: z.literal('transcription'),
+	id: z.string(),
+	text: z.string(),
+	capture_ts: z.number(),
+	end_ts: z.number(),
+});
+
+// Note: wrapup responses are generated locally in Node now.
+
+export const errorSchema = base.extend({
+	type: z.literal('error'),
+	code: z.string(),
+	message: z.string(),
+	details: z.any().optional(),
+});
+
+export const inboundSchema = z.union([transcriptionSchema, errorSchema]);

@@ -6,12 +6,19 @@
 # List of (numeric) user IDs allowed to use commands
 allowed_commanders = []
 
+# Networking config
+[net]
+# URL for the AI service.
+ai_service_url = "ws://localhost:8771"
+# Size of audio chunks in milliseconds sent to the Python service.
+# chunk_ms = 1000
+
 # Whisper model configuration
 [whisper]
 # Model name for speech-to-text
 model = "openai/whisper-small.en"
 # Log probability threshold for Whisper transcription (lower = more speculative)
-logprob_threshold = -1.0
+logprob_threshold = -0.25
 # No speech threshold for Whisper (0.0-1.0, lower = more strict about detecting speech)
 no_speech_threshold = 0.1
 # Initial prompt for Whisper to condition the transcription. You can add a few proper nouns here as hints.
@@ -19,22 +26,63 @@ prompt = "Dungeons and Dragons, spell, roll, saving throw, initiative, owlbear, 
 
 # Voice handling configuration
 [voice]
-# Seconds of silence before ending a segment
-silence_threshold_seconds = 1.25
-# Voice Activity Detection (VAD) threshold for Silero VAD (0.0-1.0, higher = more strict)
-vad_threshold = 0.75
-# Maximum allowed speech buffer length in seconds before forced into processing (0 = disabled)
-max_speech_buf_seconds = 60
+# JS segmenter (energy VAD) options. These control how the Node side pre-segments audio.
+# Threshold in dBFS above which a frame is considered speech (more negative = more sensitive)
+vad_db_threshold = -45
+# Consecutive silence required to end a segment, in milliseconds
+silence_gap_ms = 1250
+# VAD analysis frame size in milliseconds (fixed-size energy windows)
+vad_frame_ms = 30
+# Maximum segment duration in milliseconds before forced finalization
+max_segment_ms = 30000
+# Minimum segment duration in milliseconds to avoid emitting tiny blips
+min_segment_ms = 200
 
 # Configuration for generating outlines.
 [wrapup]
-# OpenAI model name
+# Gemini/OpenAI model name
 model = "gpt-4o-mini"
 # List of tips for the wrapup LLM.
 tips = []
+# Domain vocabulary: proper nouns and phrases to help correct STT errors (e.g., names, places).
+vocabulary = [
+	# "Jörgen",
+	# "Skotadinos",
+]
+# System prompt used to generate session outlines. If empty, a sensible default is used.
+prompt = ""
+# Gemini generation params
+temperature = 0.05
+max_output_tokens = 10240
 
-# Mapping of usernames to aliases.
-[username_map]
+# Mapping of numeric Discord user IDs to aliases.
+[userid_map]
 
 # Mapping of phrases to remap in the chat log.
 [phrase_map]
+
+# Optional per-game profile overrides. Create any number of profiles like [profile.xyz].
+# Supported keys:
+#   whisper_prompt = "..."              # overrides [whisper].prompt
+#   wrapup_prompt = "..."               # overrides [wrapup].prompt
+#   wrapup_tips = ["...", "..."]        # merged with root [wrapup].tips
+#   wrapup_vocabulary = ["...", "..."]  # overrides root [wrapup].vocabulary
+#   allowed_commanders = ["..."]        # merged with root [discord].allowed_commanders
+#   [profile.xyz.userid_map]            # merged onto root [userid_map]
+#   [profile.xyz.phrase_map]            # merged onto root [phrase_map]
+
+[profile.example]
+whisper_prompt = "Dungeons and Dragons, Baldur's Gate, owlbear, goblin camp."
+allowed_commanders = ["123456789012345678"]
+wrapup_prompt = "Summarize the session with focus on puzzles and clues."
+wrapup_tips = [
+	"Use character aliases: George/Jörgen/Lawrence",
+]
+wrapup_vocabulary = ["Jörgen", "Skotadinos"]
+
+[profile.example.userid_map]
+"123456789012345678" = "George/Jörgen/Lawrence"
+
+[profile.example.phrase_map]
+"owl bear" = "owlbear"
+"skotodinos" = "skotadinos"

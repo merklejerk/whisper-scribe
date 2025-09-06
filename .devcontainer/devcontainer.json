@@ -1,0 +1,32 @@
+{
+    "name": "LLM-dev",
+    "dockerComposeFile": [ ".docker-compose.yml" ],
+    "service": "llm_dev", 
+    "workspaceFolder": "/workspace",
+    "updateRemoteUserUID": true,
+    "remoteUser": "user",
+    "initializeCommand": [ "/bin/bash", "-c", "cd .devcontainer && ([ -f .env ] && . .env; ln -srf \"docker-compose.${BACKEND:-cpu}.yml\" \".docker-compose.yml\")" ],
+    "postCreateCommand": [ "/bin/bash", ".devcontainer/post-create.sh" ],
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+                "python.envFile": "${workspaceFolder}/.devcontainer/.pylance.env"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-python.vscode-python-envs",
+                "tamasfe.even-better-toml"
+            ]
+        }
+    },
+    "portsAttributes": {
+        "9771": {
+            "onAutoForward": "ignore"
+        }
+    },
+    "otherPortsAttributes": {
+        "onAutoForward": "ignore"
+    }
+}

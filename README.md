@@ -1,71 +1,168 @@
 # WhisperScribe
 
-<img src="static/banner.svg" width="300px" alt="whisper scribe banner" style="display: block; margin: 2em auto">
+<img src="static/banner.svg" width="300px" alt="WhisperScribe banner" style="display: block; margin: 2em auto">
 
-*WhisperScribe* is a self-hosted Discord bot for live, multi-user voice transcription and automated session summarization, designed for tabletop RPGs. It leverages local speech-to-text transformer models (Whisper) to transcribe Discord voice and text channels as you play. In chat, users can command the bot to post session logs and an AI-generated session summary (requires OpenAI key).
+Self-hosted Discord bot for live, multi-user voice transcription and automated session wrap-ups tailored for tabletop RPGs. It now runs as two cooperating services:
+
+- TypeScript Discord Gateway (Node): joins your voice channel, performs per-user VAD/segmentation, logs text/voice events, serves chat commands, and generates wrap-ups with Gemini.
+- Python ASR Service: runs Whisper (Hugging Face transformers) locally and exposes a WebSocket API for fast, on-device speech-to-text.
+
+Both services share a simple JSON message protocol over WebSocket and write session artifacts under `data/<SESSION_NAME>/`.
+
+## Features
+
+- Live, multi-user transcription from Discord voice with robust per-user segmentation
+- Local Whisper STT via transformers (CPU or GPU)
+- Session logging to JSONL and formatted logs-on-demand (`!log`)
+- One-command session wrap-up (`!wrapup`) with Gemini structured output, saved as Markdown
+- Optional upload of wrap-up + logs to a private GitHub Gist
+- Configurable user aliases and phrase normalization to clean up STT artifacts
+- Profiles to override prompts, vocabulary, and permissions per campaign
+
+## Architecture
+
+Discord ↔ Node (discord.js) ⇄ WebSocket ⇄ Python (Whisper)
+
+- Node captures per-user audio from Discord, performs VAD/segmentation, and sends finalized mono@16k PCM chunks to Python.
+- Python normalizes/enhances audio, runs Whisper, and streams back transcriptions.
+- Node appends to `data/<session>/log.jsonl`, tracks context, and generates wrap-ups with Gemini on demand.
 
 ## Requirements
 
-- Python 3.13+
-- Poetry for dependency management
-- OpenAI API key (for session summaries)
+- Node.js 20+ and npm
+- Python 3.12+ and uv (recommended)
+- For GPU acceleration: a supported PyTorch build for your platform/driver. Otherwise, CPU works with smaller models.
+- Linux/macOS/Windows are fine; Discord voice capture requires Opus decoding (bundled via `@discordjs/opus`).
 
-## Installation
+Environment variables (copy `.env.example` to `.env`):
 
-### 1. Clone the repo
+- DISCORD_TOKEN: required for the bot
+- GEMINI_API_KEY: required for wrap-up generation (Node)
+- GITHUB_TOKEN: optional, enables gist uploads
+
+
+## Install & Configure
+
+1) Clone
+
 ```bash
 git clone git@github.com:merklejerk/whisper-scribe.git
 cd whisper-scribe
 ```
-### 2. Install dependencies
-```bash
-poetry install
-```
-If you want to use GPU acceleration on an AMD card, you will need to manually install the rocm version of pytorch libs:
-```bash
-poetry run pip install -I 'torch==2.7' 'torchaudio==2.7' --index-url https://download.pytorch.org/whl/rocm6.3
-```
-### 3. Configure environment
-Copy `.env.example` to `.env` and populate it with your secrets:
+
+2) Config files
+
 ```bash
 cp .env.example .env
-```
-Copy `config.example.toml` to `config.toml` and populate it with your configuration:
-```
-cp .config.example.toml config.toml
+cp config.example.toml config.toml
 ```
 
-If you're planning on running this CPU-only, I recommend setting your whisper `model` to `openai/whisper-small.en` for near real-time transcription. If you've got a compatible GPU, `openai/whisper-large-v3-turbo` works fantastic.
+Edit `config.toml` as needed (see “Config reference”).
 
-## Usage
+3) Python ASR service deps
 
-Run the bot with Poetry:
 ```bash
-poetry run python -m src.cli VOICE_CHANNEL_ID SESSION_NAME
+cd py
+uv sync
 ```
 
-- Voice channel ID is the numeric ID of the channel.
-- The bot will instantly join the voice channel you provide and start transcribing to `logs/{SESSION_NAME}.ndjson`.
-- At any time you can say `!wrapup` in the voice channel's text channel to have the bot produce wrapup files (transcript + session summary), which get posted to chat and also saved to `wrapup/`.
-- You can also say `!log` to just generate the transcript.
-- If you provide a github token and the `--gist` CLI flag, it'll upload wrapup/log files to github gist instead of directly to discord.
+4) Node gateway deps and build
 
-Unless everyone in your group has a AAA podcasting setup in a perfect environment, transcripts will probably be riddled with artifacts and misheard words. Adding your most commonly used proper nouns to the `whisper.prompt` config can help. However, I do find that modern retail LLMs are actually pretty good at teasing out a remarkably cohesive narrative from low quality transcripts, so you can probably still get a useful wrapup summary.
+```bash
+cd ../js
+npm install && npm run build
+```
 
-## Example Output
+## Run
 
-You can find a log and outline generated from a real session [HERE](https://gist.github.com/merklejerk/25c4504a51c7e67b1c7a3b5199459a49).
+You run the Python ASR service, then the Node bot. The default WebSocket is `ws://localhost:8771` (configurable).
 
-## How It Works
+1) Start Python ASR
 
-- `py-cord` provides Discord API and voice channel access for real-time audio capture and bot stuff.
-- `silero-vad` for voice activity detection and for segmenting user speech.
-- `transformers` + Whisper for local speech-to-text transcription.
-- `openai` (GPT) for generating session summaries.
-- Lots of random ugly hacks to get all the libraries to work stabley together.
+```bash
+cd py
+uv run start
+```
 
-## TODO
+This loads the Whisper model defined in `config.toml` and listens for audio jobs. To influence device selection, set `DEVICE` (e.g., `cuda`, `mps`, `cpu`) in your environment; default is `auto`.
 
-- Docker container.
+2) Start the Node Discord bot
 
-## Advanced Features
+```bash
+cd ../js
+npm run start -- bot <VOICE_CHANNEL_ID> \
+	--ai-service-url ws://localhost:8771 \
+	--session-name "08.30.25" \
+	--profile example \
+	--prev-session "07.19.25" \
+	--gist \
+	--allowed-commanders 123456789012345678
+```
+
+Tips:
+
+- Get the voice channel ID from Discord (User Settings → Advanced → Developer Mode; right-click channel → Copy ID).
+- When running without `--session-name`, a UUID is used.
+- If `--gist` is set and `GITHUB_TOKEN` is present, `wrapup.md` and `log.jsonl` are uploaded to a private gist on `!wrapup`.
+
+### In-Discord commands
+
+- `!log` — replies with a formatted text log attachment for the current session
+- `!wrapup` — generates a structured wrap-up via Gemini and replies with `wrapup.md`
+
+Permissions: if `discord.allowed_commanders` (or profile override) is non-empty, only those IDs/tags can run commands.
+
+### CLI helpers (Node)
+
+From `js/` you can operate on recorded sessions without Discord:
+
+```bash
+# Print formatted log
+npm run start -- log <SESSION_NAME>
+
+# Generate/refresh wrapup (uses cached file unless --new)
+npm run start -- wrapup <SESSION_NAME> --profile example --new --gist
+```
+
+## Data layout
+
+Artifacts are stored under `data/<SESSION_NAME>/`:
+
+- `log.jsonl` — JSON lines: { userId, displayName, startTs, endTs, origin, text }
+- `wrapup.md` — Markdown recap with scenes, quotes, items, developments
+
+## Config reference (config.toml)
+
+See `config.example.toml` for full examples. Highlights:
+
+- `[discord]`
+	- `allowed_commanders`: restrict who can run `!log`/`!wrapup`.
+- `[net]`
+	- `ai_service_url`: WebSocket URL the Node bot uses (and Python binds to).
+- `[whisper]`
+	- `model`: e.g., `openai/whisper-small.en` for CPU, `whisper-v3-large-turbo` for strong GPUs
+	- `logprob_threshold`, `no_speech_threshold`, `prompt`: base system prompt for Whisper
+- `[voice]` (Node segmenter)
+	- `vad_db_threshold`, `silence_gap_ms`, `vad_frame_ms`, `max_segment_ms`, `min_segment_ms`
+- `[wrapup]` (Node wrap-up generator)
+	- `model`: Gemini model id (e.g., `gemini-2.5-flash`)
+	- `tips`, `vocabulary`, `prompt`, `temperature`, `max_output_tokens`
+- `[userid_map]` / `[phrase_map]`
+	- Map user IDs → aliases; normalize common mis-hearings in logs before wrap-up.
+- `[profile.<name>]`
+	- Per-campaign overrides: `whisper_prompt`, `wrapup_prompt`, `wrapup_tips`, `wrapup_vocabulary`, `allowed_commanders`, and nested `userid_map` / `phrase_map` merges.
+
+Notes:
+
+- The Node gateway appends a rolling text window to the ASR prompt (`[whisper].prompt`) to help resolve pronouns and local context.
+- The Python service ignores `[wrapup]` — wrap-ups are generated entirely on the Node side.
+
+## Model guidance
+
+- CPU-only: prefer `openai/whisper-small.en` for near‑real‑time.
+- GPU (CUDA/MPS/ROCm): prefer `whisper-v3-large-turbo` for best accuracy/performance balance.
+- Set `DEVICE` to force device (e.g., `DEVICE=cuda`) when starting the Python service.
+
+## License
+
+See `LICENSE`.

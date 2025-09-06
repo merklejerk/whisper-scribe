@@ -1,0 +1,60 @@
+[project]
+name = "py"
+version = "0.1.0"
+description = "Add your description here"
+classifiers = [ "Private :: Do Not Upload" ]
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+	"pydantic>=2.11.7",
+	"python-dotenv (>=1.1.0,<2.0.0)",
+	"torch (>=2.6.0,<3.0.0)",
+	"numpy (>=2.2.4,<3.0.0)",
+	"transformers (>=4.0.0,<5.0.0)",
+	"accelerate (>=0.20.0,<1.0.0)",
+	"torchaudio (>=2.6.0,<3.0.0)",
+	"scipy (>=1.15.2,<2.0.0)",
+	"aiofiles (>=24.1.0,<25.0.0)",
+	"aiohttp>=3.8.0,<4.0.0",
+	"openai (>=1.76.0,<2.0.0)",
+	"tomli (>=2.2.1,<3.0.0)",
+	"ollama (>=0.4.8,<0.5.0)",
+	"websockets>=15.0.1",
+]
+
+[dependency-groups]
+debug = [
+	"pytest>=8.4.1",
+	"pytest-asyncio>=1.1.0",
+	"sounddevice (>=0.5.1,<0.6.0)",
+	"soundfile (>=0.13.1,<0.14.0)",
+]
+
+[project.scripts]
+start = "src.server:main"
+
+[tool.uv]
+override-dependencies = [
+	"torch; sys_platform == 'never'",
+	"torchaudio; sys_platform == 'never'",
+	"torchvision; sys_platform == 'never'",
+	"triton; sys_platform == 'never'",
+	"bitsandbytes; sys_platform == 'never'",
+	"llama-cpp-python; sys_platform == 'never'",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+	"real: runs a real model inference; requires REAL_STT_AUDIO env var",
+]
+addopts = "-m 'not real'"
