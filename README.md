@@ -34,6 +34,17 @@ Discord ↔ Node (discord.js) ⇄ WebSocket ⇄ Python (Whisper)
 - For GPU acceleration: a supported PyTorch build for your platform/driver. Otherwise, CPU works with smaller models.
 - Linux/macOS/Windows are fine; Discord voice capture requires Opus decoding (bundled via `@discordjs/opus`).
 
+## environment
+
+You can run/develop in your host OS or use the provided Dev Containers (recommended):
+
+- Dev Containers: ready-to-use images for `cpu`, `rocm`, and `cuda` backends.
+	1) Copy `.devcontainer/.env.example` to `.devcontainer/.env`.
+	2) Set `BACKEND=cpu`, `rocm`, or `cuda` (CUDA image is currently untested).
+	3) Open the repo in VS Code and “Reopen in Container”. System packages for PyTorch (and friends like Triton) will be preinstalled for the chosen backend.
+
+- Note: the Python service expects certain heavy deps (e.g., torch, triton, etc.) to be available on the `PYTHONPATH`. The devcontainers take care of this for you.
+
 Environment variables (copy `.env.example` to `.env`):
 
 - DISCORD_TOKEN: required for the bot
@@ -59,10 +70,11 @@ cp config.example.toml config.toml
 
 Edit `config.toml` as needed (see “Config reference”).
 
-3) Python ASR service deps
+3) Python ASR service deps (virtual env with system site packages)
 
 ```bash
 cd py
+uv venv --system-site-packages
 uv sync
 ```
 
