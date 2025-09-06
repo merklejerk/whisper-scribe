@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import paths from './paths.js';
 import xmlEscape from 'xml-escape';
+import markdownEscape from 'markdown-escape';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
@@ -322,52 +323,44 @@ export async function generateWrapupWithGemini(
 	return text;
 }
 
-function renderWrapupMarkdown(data: {
-	title: string;
-	context?: string;
-	scenes: any[];
-	keyFindings?: string[];
-}): string {
+function renderWrapupMarkdown(data: WrapupData): string {
 	const lines: string[] = [];
-	lines.push(`# ${data.title}`);
+	lines.push(`# ${markdownEscape(data.title)}`);
 	if (data.context) {
 		lines.push(`\n## Context`);
-		lines.push(data.context);
+		lines.push(markdownEscape(data.context));
 	}
 	if (data.keyFindings && data.keyFindings.length) {
 		lines.push('\n## Session Developments');
-		for (const k of data.keyFindings) lines.push(`- ${k}`);
+		for (const k of data.keyFindings) lines.push(`- ${markdownEscape(k)}`);
 	}
 	data.scenes.forEach((scene, idx) => {
 		const title = scene.title || `Scene ${idx + 1}`;
-		lines.push(`\n## ${title}`);
-		if (scene.summary) lines.push(`\n${scene.summary}`);
+		lines.push(`\n## ${markdownEscape(title)}`);
+		if (scene.summary) lines.push(`\n${markdownEscape(scene.summary)}`);
 		if (scene.quotes && scene.quotes.length) {
 			lines.push('\n### Quotes');
 			for (const c of scene.quotes) {
-				lines.push(`#### ${c.title}`);
+				lines.push(`#### ${markdownEscape(c.title)}`);
 				lines.push(
 					...c.quotes.map(
-						(q: { speaker: string; text: string }) => `* **${q.speaker}**: *${q.text}*`,
+						(q: { speaker: string; text: string }) =>
+							`* **${markdownEscape(q.speaker)}**: *${markdownEscape(q.text)}*`,
 					),
 				);
 			}
 		}
 		if (scene.items && scene.items.length) {
 			lines.push('\n### Items / Rewards');
-			for (const it of scene.items) lines.push(`- ${it}`);
+			for (const it of scene.items) lines.push(`- ${markdownEscape(it)}`);
 		}
 		if (scene.developments && scene.developments.length) {
 			lines.push('\n### Developments');
-			for (const d of scene.developments) lines.push(`- ${d}`);
-		}
-		if (scene.funnies && scene.funnies.length) {
-			lines.push('\n### Highlights & Roleplay');
-			for (const f of scene.funnies) lines.push(`- ${f}`);
+			for (const d of scene.developments) lines.push(`- ${markdownEscape(d)}`);
 		}
 		if (scene.combat) {
 			lines.push('\n### Combat');
-			lines.push(scene.combat);
+			lines.push(markdownEscape(scene.combat));
 		}
 	});
 	lines.push('');
