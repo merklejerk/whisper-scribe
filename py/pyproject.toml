@@ -3,7 +3,6 @@ name = "py"
 version = "0.1.0"
 description = "Add your description here"
 classifiers = [ "Private :: Do Not Upload" ]
-readme = "README.md"
 requires-python = ">=3.12"
 
 dependencies = [
@@ -58,3 +57,6 @@ markers = [
 	"real: runs a real model inference; requires REAL_STT_AUDIO env var",
 ]
 addopts = "-m 'not real'"
+
+[tool.black]
+line-length = 120

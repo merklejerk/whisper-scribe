@@ -1,0 +1,68 @@
+name: whisper-scribe
+
+networks:
+  discord:
+    driver: bridge
+
+x-build: &default-build
+  context: .
+  dockerfile: ./docker/Dockerfile
+  args:
+    BACKEND: ${BACKEND:-cpu} # cpu | cuda | rocm
+    USER_ID: ${UID:-1000}
+    DEVICE: ${DEVICE:-auto}
+
+services:
+  base:
+    image: whisper-scribe:${BACKEND:-cpu}
+    build: *default-build
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    env_file:
+      - ./.env
+    environment:
+      - USER_ID=${UID:-1000}
+      - DEBUG=${DEBUG:-}
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+      - ./data:/app/data
+    networks:
+      - discord
+    ipc: host
+
+  asr:
+    extends: base
+    environment:
+      - MODE=asr
+      - DEVICE=${DEVICE:-auto}
+      - UV_LINK_MODE=copy
+      - HF_HOME=/app/.cache/huggingface
+      - ASR_HOST=${ASR_HOST:-}
+      - ASR_PORT=${ASR_PORT:-}
+    volumes:
+      - ${HF_HOME:-~/.cache/huggingface}:/app/.cache/huggingface
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+
+  bot:
+    extends: base
+    environment:
+      - MODE=bot
+      - VOICE_CHANNEL_ID=${VOICE_CHANNEL_ID:-}
+      - SESSION=${SESSION:-}
+      - PROFILE=${PROFILE:-}
+      - GIST=${GIST:-}
+      - PREV_SESSION=${PREV_SESSION:-}
+
+  all:
+    extends: asr
+    environment:
+      - MODE=all
+      - VOICE_CHANNEL_ID=${VOICE_CHANNEL_ID:-}
+      - SESSION=${SESSION:-}
+      - PROFILE=${PROFILE:-}
+      - GIST=${GIST:-}
+      - PREV_SESSION=${PREV_SESSION:-}

@@ -18,7 +18,7 @@ async function generateWrapup(
 	sessionName: string,
 	forceNew?: boolean,
 	profile?: string,
-	prevSessionName?: string,
+	prevWrapupRef?: string,
 	gist?: boolean,
 ) {
 	const appCfg = loadConfig({ aiServiceUrl: undefined, profile });
@@ -41,7 +41,7 @@ async function generateWrapup(
 			maxOutputTokens: appCfg.wrapupMaxTokens,
 			tips: appCfg.wrapupTips,
 			forceNew,
-			prevSessionName,
+			prevWrapupRef,
 		});
 
 		// Always written by createWrapup; CLI prints to stdout
@@ -91,8 +91,7 @@ async function main() {
 					.option('prev-session', {
 						alias: 'P',
 						type: 'string',
-						describe:
-							'Optional previous session name whose wrapup should be used as context',
+						describe: 'Optional previous session name or wrapup URL to include as context',
 					})
 					.option('gist', {
 						type: 'boolean',
@@ -113,7 +112,7 @@ async function main() {
 					sessionName: argv.sessionName,
 					allowedCommanders: argv.allowedCommanders,
 					profile: argv.profile as string | undefined,
-					prevSessionName: argv.prevSession as string | undefined,
+					prevWrapupRef: argv.prevSession as string | undefined,
 					gist: (argv.gist as boolean | undefined) || false,
 				});
 			},
@@ -156,8 +155,7 @@ async function main() {
 					.option('prev-session', {
 						alias: 'P',
 						type: 'string',
-						describe:
-							'Optional previous session name whose wrapup should be used as context',
+						describe: 'Optional previous session name or wrapup URL to include as context',
 					})
 					.option('gist', {
 						type: 'boolean',

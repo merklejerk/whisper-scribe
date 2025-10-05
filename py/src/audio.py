@@ -23,14 +23,14 @@ def _decode_to_float32(buf: bytes, channels: int, sample_width: int) -> np.ndarr
         arr = np.frombuffer(buf, dtype=np.uint8).astype(np.float32)
         arr = (arr - 128.0) / 128.0
     elif sample_width == 2:
-        arr = np.frombuffer(buf, dtype='<i2').astype(np.float32) / 32768.0
+        arr = np.frombuffer(buf, dtype="<i2").astype(np.float32) / 32768.0
     elif sample_width == 4:
         # Try float32 first
-        f = np.frombuffer(buf, dtype='<f4').astype(np.float32)
+        f = np.frombuffer(buf, dtype="<f4").astype(np.float32)
         # Heuristic: if values are way outside [-1, 1], treat as int32 PCM
         max_abs = float(np.max(np.abs(f))) if f.size else 0.0
         if max_abs > 16.0:
-            i = np.frombuffer(buf, dtype='<i4').astype(np.float32)
+            i = np.frombuffer(buf, dtype="<i4").astype(np.float32)
             arr = i / 2147483648.0
         else:
             arr = f
@@ -71,7 +71,7 @@ def normalize_to_mono16k(data: bytes, sr: int, channels: int, sample_width: int)
     x = _resample_float32(x, src_sr=sr, dst_sr=TARGET_SR)
     # Clip to [-1,1] and convert to int16 little-endian
     y = np.clip(x, -1.0, 1.0)
-    pcm16 = (y * 32768.0).astype('<i2', copy=False).tobytes()
+    pcm16 = (y * 32768.0).astype("<i2", copy=False).tobytes()
     return pcm16
 
 
@@ -80,17 +80,20 @@ def bandpass_filter(
     sr: int,
     lowcut: float = 250.0,
     highcut: float = 3300.0,
-    order: int = 5
+    order: int = 5,
 ) -> np.ndarray:
     nyq = 0.5 * sr
     low = lowcut / nyq
     high = highcut / nyq
     # Explicitly cast the return of butter to a (b,a) tuple to satisfy type checker
-    ba = cast(Tuple[np.ndarray, np.ndarray], butter(order, [low, high], btype="band", output='ba'))
+    ba = cast(
+        Tuple[np.ndarray, np.ndarray],
+        butter(order, [low, high], btype="band", output="ba"),
+    )
     b, a = ba
     # Ensure result is a float32 numpy array
     out = lfilter(b, a, signal)
-    return np.asarray(out, dtype=np.float32, order='C')
+    return np.asarray(out, dtype=np.float32, order="C")
 
 
 def pre_emphasis(signal: np.ndarray, coeff: float = 0.97) -> np.ndarray:
@@ -110,9 +113,5 @@ def rms_normalize(signal: np.ndarray, target_db: float = -20.0) -> np.ndarray:
 def enhance_speech(audio: np.ndarray, sr: int) -> np.ndarray:
     """Applies a series of filters to enhance speech quality."""
     return rms_normalize(
-        bandpass_filter(
-            pre_emphasis(audio, 0.8),
-            sr,
-            order=3
-        ),
+        bandpass_filter(pre_emphasis(audio, 0.8), sr, order=3),
     ).clip(-1.0, 1.0)

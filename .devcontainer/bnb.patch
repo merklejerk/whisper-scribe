@@ -1,0 +1,30 @@
+diff --git a/csrc/kernels.hip b/csrc/kernels.hip
+index ec3f7f0..fe86572 100644
+--- a/csrc/kernels.hip
++++ b/csrc/kernels.hip
+@@ -2109,6 +2109,7 @@ __global__ void kdequant_mm_int32_fp16(
+ #define DENORM 1.0f/127.0f
+ #define MAX_SPARSE_COUNT 32
+ #define SMEM_SIZE 8*256
++#define warpSize 32
+ #define WARP_SIZE warpSize
+ template <typename T, int SPMM_ITEMS, int BITS>
+ __global__ void kspmm_coo_very_sparse_naive(int *max_count, int *max_idx, int *offset_rowidx, int *rowidx, int *colidx, half *values, T *B, half *out, float * __restrict__ const dequant_stats, int nnz, int rowsA, int rowsB, int colsB)
+diff --git a/csrc/ops.hip b/csrc/ops.hip
+index 260b74b..e43a7c2 100644
+--- a/csrc/ops.hip
++++ b/csrc/ops.hip
+@@ -692,9 +692,9 @@ template <typename T, int BITS> void gemm_4bit_inference_naive(int m, int n, int
+ 	//warpsize - 32
+         int num_blocks = (m+3)/4;
+ 	//warpsize - 64
+-        if (warpSize == 64) {
+-          num_blocks = (m+1)/2;
+-        }
++        //if (warpSize == 64) {
++        //  num_blocks = (m+1)/2;
++        //}
+ 
+   hipLaunchKernelGGL(( kgemm_4bit_inference_naive<T, 128, BITS>), dim3(num_blocks), dim3(128), 0, stream, m,  n,  k, A,  B, absmax, datatype, out, lda, ldb, ldc, blocksize);
+   CUDA_CHECK_RETURN(hipPeekAtLastError());
+   

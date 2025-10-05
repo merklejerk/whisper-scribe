@@ -4,13 +4,11 @@ services:
       file: docker-compose.cpu.yml
       service: llm_dev
     build:
-      dockerfile: "Dockerfile.rocm"
       args:
-        BASE_IMAGE: "ubuntu:24.04"
         BACKEND: "rocm" 
+        ROCM_ARCH: ${ROCM_ARCH:-"gfx1100"}
     environment:
       - BACKEND=rocm
-      - HSA_OVERRIDE_GFX_VERSION=11.0.0
       - HSA_ENABLE_SDMA=0
       - GPU_MAX_HEAP_SIZE=100
       - GPU_MAX_ALLOC_PERCENT=100

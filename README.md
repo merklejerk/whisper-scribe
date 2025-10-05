@@ -87,22 +87,77 @@ npm install && npm run build
 
 ## Run
 
-You run the Python ASR service, then the Node bot. The default WebSocket is `ws://localhost:8771` (configurable).
-
-1) Start Python ASR
-
 ```bash
 cd py
 uv run start
 ```
 
-This loads the Whisper model defined in `config.toml` and listens for audio jobs. To influence device selection, set `DEVICE` (e.g., `cuda`, `mps`, `cpu`) in your environment; default is `auto`.
 
 2) Start the Node Discord bot
 
 ```bash
-cd ../js
 npm run start -- bot <VOICE_CHANNEL_ID> \
+## Run with Docker
+
+This repo now includes production Dockerfiles and docker-compose configs for three backends:
+
+- CPU: docker-compose.cpu.yml
+- NVIDIA CUDA: docker-compose.cuda.yml
+- AMD ROCm: docker-compose.rocm.yml
+
+All variants share settings from docker-compose.base.yml. The Python ASR service listens on ws://0.0.0.0:8771 and the Node bot connects to it.
+
+Before running, copy and edit configuration:
+
+1) Make a config.toml in the repo root (see config.example.toml for fields).
+2) Set environment secrets in .env (see .env.example). At minimum set DISCORD_TOKEN, and optionally GEMINI_API_KEY and GITHUB_TOKEN.
+3) Ensure ./data exists (it will be created on first run if missing).
+
+### CPU
+
+```
+docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml build
+docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml up
+```
+
+### NVIDIA (CUDA)
+
+Requires recent Docker with NVIDIA runtime. On supported installs, the compose file requests gpus: all.
+
+```
+docker compose -f docker-compose.base.yml -f docker-compose.cuda.yml build
+docker compose -f docker-compose.base.yml -f docker-compose.cuda.yml up
+```
+
+### AMD (ROCm)
+
+Host must expose /dev/kfd and /dev/dri and have ROCm-capable hardware.
+
+```
+docker compose -f docker-compose.base.yml -f docker-compose.rocm.yml build
+docker compose -f docker-compose.base.yml -f docker-compose.rocm.yml up
+```
+
+### Running the bot
+
+You can supply VOICE_CHANNEL_ID as an environment variable to auto-start the bot when containers come up:
+
+```
+VOICE_CHANNEL_ID=1234567890 docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml up
+```
+
+Or exec into the container and run commands directly:
+
+```
+docker compose exec bot node js/dist/index.js bot <VOICE_CHANNEL_ID> --ai-service-url ws://localhost:8771
+```
+
+You can also run the other CLI commands inside the bot container:
+
+```
+docker compose exec bot node js/dist/index.js log <SESSION_NAME>
+docker compose exec bot node js/dist/index.js wrapup <SESSION_NAME>
+```
 	--ai-service-url ws://localhost:8771 \
 	--session-name "08.30.25" \
 	--profile example \

@@ -7,6 +7,7 @@ import xmlEscape from 'xml-escape';
 import markdownEscape from 'markdown-escape';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { debug } from './debug.js';
 
 const QUOTE_SCHEMA = z
 	.object({
@@ -156,7 +157,48 @@ export interface WrapupOptions extends GeminiOptions {
 	phraseMap?: Record<string, string>;
 	vocabulary?: string[];
 	forceNew?: boolean; // if true, regenerate even if wrapup exists
-	prevSessionName?: string; // optional previous session name to include its wrapup as context
+	prevWrapupRef?: string; // optional session name or wrapup URL for context
+}
+
+function isHttpUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return url.protocol === 'http:' || url.protocol === 'https:';
+	} catch (_) {
+		return false;
+	}
+}
+
+async function loadPreviousWrapup(ref: string): Promise<string> {
+	const target = ref.trim();
+	if (!target) return '';
+
+	if (isHttpUrl(target)) {
+		try {
+			const resp = await fetch(target);
+			if (!resp.ok) {
+				console.warn(
+					`[wrapup] Failed to fetch previous wrapup from ${target}: ${resp.status} ${resp.statusText}`,
+				);
+				return '';
+			}
+			return await resp.text();
+		} catch (err) {
+			console.warn(`[wrapup] Error fetching previous wrapup from ${target}:`, err);
+			return '';
+		}
+	}
+
+	const prevPath = paths.sessionWrapupPath(target);
+	if (!fs.existsSync(prevPath)) {
+		return '';
+	}
+	try {
+		return fs.readFileSync(prevPath, 'utf8');
+	} catch (err) {
+		console.warn(`[wrapup] Failed to read previous wrapup at ${prevPath}:`, err);
+		return '';
+	}
 }
 
 /**
@@ -188,17 +230,10 @@ export async function createWrapup(opts: WrapupOptions): Promise<string> {
 	const transcript = generateTranscript(transformed, opts.sessionName);
 
 	// Optionally load previous session wrapup for context
-	let previousWrapup = '';
-	if (opts.prevSessionName) {
-		const prevPath = paths.sessionWrapupPath(opts.prevSessionName);
-		if (fs.existsSync(prevPath)) {
-			try {
-				previousWrapup = fs.readFileSync(prevPath, 'utf8');
-			} catch (_) {
-				// ignore read errors and proceed without prior context
-			}
-		}
-	}
+	const previousWrapup = opts.prevWrapupRef
+		? await loadPreviousWrapup(opts.prevWrapupRef)
+		: '';
+	debug(`[wrapup] Using previous wrapup: ${previousWrapup.substring(0, 100)}...`);
 	// Build XML input combining prior wrapup (if any) and current transcript
 	const vocabBlock =
 		opts.vocabulary && opts.vocabulary.length
@@ -216,7 +251,7 @@ export async function createWrapup(opts: WrapupOptions): Promise<string> {
 		throw new Error('GEMINI_API_KEY must be set to run wrapup.');
 	}
 
-	// Pre-built structured output schema (defined once at module scope)
+	// Pre-built structured output schema (defined once at module f #sym:cscope)
 	const responseSchema = GEMINI_RESPONSE_SCHEMA;
 
 	console.log(`[wrapup] Requesting wrapup...`);
@@ -376,7 +411,7 @@ export function toWrapupLogEntry(
 ): WrapupLogEntry {
 	const alias = userIdMap?.[entry.userId];
 	let text = entry.text;
-	if (phraseMap && Object.keys(phraseMap).length) {
+	if (text && phraseMap && Object.keys(phraseMap).length) {
 		for (const [src, dst] of Object.entries(phraseMap)) {
 			if (!src) continue;
 			text = text.replaceAll(src, dst);

@@ -1,0 +1,22 @@
+# Node
+node_modules
+npm-debug.log*
+
+# Python
+__pycache__
+*.py[cod]
+.pytest_cache
+.venv
+
+# VCS
+.git
+.gitignore
+
+# Data and secrets
+.env
+config.toml
+data/
+HF_HOME
+
+# Misc
+.DS_Store

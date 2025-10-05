@@ -79,6 +79,7 @@ function extractFromToml(t: any | undefined, profile?: string): Partial<AppConfi
 		const profiles = (t.profile || {}) as Record<string, any>;
 		const p = profiles[profile];
 		if (p && typeof p === 'object') {
+			console.log(`[CONFIG] Using profile '${profile}'`);
 			out.profile = profile;
 			// Merge allowed_commanders.
 			if (Array.isArray(p.allowed_commanders)) {

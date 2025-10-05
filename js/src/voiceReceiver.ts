@@ -26,6 +26,8 @@ export interface SegmenterOptions {
 	webrtcVadMode?: VADMode;
 	// Callback invoked when a speech segment is finalized
 	send: (segment: VoiceSegment) => void;
+	// Amount of pre-speech audio (ms) to prepend when segment starts
+	preRollMs?: number; // e.g. 200 ms
 }
 
 export interface VoiceSegment {
@@ -57,6 +59,9 @@ interface UserBuf {
 	inQueue: Int16Array[];
 	// Per-user node-vad instance (wrapped)
 	vad?: WebRtcVad;
+	// Rolling buffer for preroll (collected while not inSpeech)
+	preRoll?: Int16Array[];
+	preRollSamples?: number;
 }
 
 export class PerUserVoiceSegmenter {
@@ -130,6 +135,25 @@ export class PerUserVoiceSegmenter {
 					}
 
 					if (!state.inSpeech) {
+						// Collect preroll frames while idle
+						const preRollMs = this.opts.preRollMs ?? 0;
+						if (!active && preRollMs > 0) {
+							if (!state.preRoll) {
+								state.preRoll = [];
+								state.preRollSamples = 0;
+							}
+							state.preRoll.push(frame.slice());
+							state.preRollSamples! += frame.length;
+							const maxPreRollSamples = Math.floor((preRollMs * TARGET_SR) / 1000);
+							while (
+								state.preRollSamples! > maxPreRollSamples &&
+								state.preRoll &&
+								state.preRoll.length
+							) {
+								const old = state.preRoll.shift()!;
+								state.preRollSamples! -= old.length;
+							}
+						}
 						if (active) {
 							this._startSegment(uid, state);
 							this._appendActiveFrame(state, frame);
@@ -216,6 +240,16 @@ export class PerUserVoiceSegmenter {
 		state.silenceSamples = 0;
 		state.pendingSilence = [];
 		state.pendingSilenceSamples = 0;
+		// Inject preroll if present
+		if (state.preRoll && state.preRoll.length) {
+			for (const fr of state.preRoll) {
+				state.frames.push(fr);
+				state.totalInSeg += fr.length;
+				state.lastActiveSamples = state.totalInSeg;
+			}
+			state.preRoll = [];
+			state.preRollSamples = 0;
+		}
 		debug('segmenter: start segment user=%s ts=%s', userId, String(state.startedTs));
 	}
 
@@ -239,30 +273,38 @@ export class PerUserVoiceSegmenter {
 		processed: boolean,
 	) {
 		if (!state.inSpeech || !state.startedTs || state.totalInSeg <= 0) return;
-		// Compute silence based on what we processed this flush; if none, use wall-clock
 		let silentMs: number;
 		if (processed) {
 			silentMs = (state.silenceSamples * 1000) / TARGET_SR;
 		} else {
 			const lastActiveTs = state.startedTs + state.lastActiveSamples / TARGET_SR;
-			const now = nowEpoch();
-			silentMs = Math.max(0, (now - lastActiveTs) * 1000);
+			silentMs = Math.max(0, (nowEpoch() - lastActiveTs) * 1000);
 		}
-		// Also compute current duration
 		const durMs = (state.totalInSeg * 1000) / TARGET_SR;
+		const wallOpenMs = (nowEpoch() - state.startedTs) * 1000;
+		const wallTimeoutMs = p.maxSegmentMs + 2000;
 
-		// Enforce minimum segment duration to avoid tiny emissions
-		if (durMs < p.minSegmentMs) {
-			// Do not finalize yet, even if we've seen a silence gap
-			return;
-		}
-
+		// Silence gap reached: finalize or discard if tiny
 		if (silentMs >= p.silenceGapMs) {
+			if (durMs < p.minSegmentMs) {
+				this._resetSpeechState(state);
+				return;
+			}
 			this._finalizeSegment(uid, state);
 			return;
 		}
-		// Also enforce max segment length centrally
-		if (durMs >= p.maxSegmentMs) this._finalizeSegment(uid, state);
+		// Wall-clock safeguard to avoid lingering open segments
+		if (wallOpenMs >= wallTimeoutMs) {
+			if (durMs >= p.minSegmentMs / 2) {
+				this._finalizeSegment(uid, state);
+			} else {
+				this._resetSpeechState(state);
+			}
+			return;
+		}
+		if (durMs >= p.maxSegmentMs) {
+			this._finalizeSegment(uid, state);
+		}
 	}
 
 	private _resetSpeechState(state: UserBuf) {
@@ -371,7 +413,7 @@ export async function attachVoiceReceiver(
 		void segmenter.flushAll();
 	});
 
-	const flushTimer = setInterval(() => void segmenter.flushAll(), 1000);
+	const flushTimer = setInterval(() => void segmenter.flushAll(), 250);
 	return () => {
 		clearInterval(flushTimer);
 		for (const dec of activeDecoders.values()) dec.destroy();

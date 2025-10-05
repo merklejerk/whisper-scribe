@@ -4,15 +4,17 @@ services:
       context: .
       dockerfile: "Dockerfile"
       args:
-        BASE_IMAGE: "intel/intel-extension-for-pytorch:2.6.0-pip-base"
+        USER_ID: $USER_ID
     environment:
       - HF_HOME=/home/user/.cache/huggingface
+      - UV_CACHE_DIR=/home/user/.cache/uv
       - UV_LINK_MODE=symlink
       - BACKEND=cpu
     volumes:
       - ../:/workspace
-      - ${HOME}/.cache/huggingface:/home/user/.cache/huggingface
-      - ${HOME}/.cache/uv:/home/user/.cache/uv
+      - ./:/workspace/.devcontainer:ro
+      - ${HF_HOME:-${HOME}/.cache/huggingface}:/home/user/.cache/huggingface
+      - ${UV_CACHE_DIR:-${HOME}/.cache/uv}:/home/user/.cache/uv
     security_opt:
       - seccomp:unconfined
     ipc: host

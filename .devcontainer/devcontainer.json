@@ -3,10 +3,10 @@
     "dockerComposeFile": [ ".docker-compose.yml" ],
     "service": "llm_dev", 
     "workspaceFolder": "/workspace",
-    "updateRemoteUserUID": true,
     "remoteUser": "user",
-    "initializeCommand": [ "/bin/bash", "-c", "cd .devcontainer && ([ -f .env ] && . .env; ln -srf \"docker-compose.${BACKEND:-cpu}.yml\" \".docker-compose.yml\")" ],
-    "postCreateCommand": [ "/bin/bash", ".devcontainer/post-create.sh" ],
+    "initializeCommand": [ "/bin/sh", "-c", "cd .devcontainer && ([ -f .env ] && . .env; ln -srf \"docker-compose.${BACKEND:-cpu}.yml\" \".docker-compose.yml\")" ],
+    // "postCreateCommand": [ "/bin/bash", ".devcontainer/post-create.sh" ],
+    "runArgs": [ "--env", "USER_ID=${localEnv:USER_ID}" ],
     "customizations": {
         "vscode": {
             "settings": {
@@ -20,13 +20,5 @@
                 "tamasfe.even-better-toml"
             ]
         }
-    },
-    "portsAttributes": {
-        "9771": {
-            "onAutoForward": "ignore"
-        }
-    },
-    "otherPortsAttributes": {
-        "onAutoForward": "ignore"
     }
 }

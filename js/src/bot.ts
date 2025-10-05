@@ -18,7 +18,7 @@ export interface RunBotOptions {
 	sessionName?: string;
 	allowedCommanders?: string[];
 	profile?: string;
-	prevSessionName?: string; // optional previous session for wrapup context
+	prevWrapupRef?: string; // optional session name or URL for wrapup context
 	gist?: boolean; // if true, !wrapup uploads a private gist
 }
 
@@ -86,9 +86,10 @@ export async function runBot(opts: RunBotOptions) {
 				geminiApiKey: cfg.geminiApiKey,
 				githubToken: cfg.githubToken,
 				asrPrompt: cfg.asrPrompt,
-				prevSessionName: opts.prevSessionName,
+				prevWrapupRef: opts.prevWrapupRef,
 				gist: opts.gist === true,
 			});
+			console.log(`Using session name: ${session.getSessionName()}`);
 
 			const connection = joinVoiceChannel({
 				channelId: voiceChannel.id,

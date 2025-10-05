@@ -33,7 +33,7 @@ export interface SessionConfig {
 	asrPrompt?: string;
 	// Rolling ASR context configuration (optional)
 	asrContextWords?: number; // default 40
-	prevSessionName?: string; // optional previous session to include prior wrapup
+	prevWrapupRef?: string; // optional session name or URL for prior wrapup context
 	gist?: boolean; // if true, upload gist on !wrapup
 }
 
@@ -71,6 +71,10 @@ export class Session {
 			debug('Log stream error:', err);
 			process.exit(1);
 		});
+	}
+
+	public getSessionName() {
+		return this.sessionInfo.sessionName;
 	}
 
 	public getSessionId() {
@@ -205,7 +209,7 @@ export class Session {
 				temperature: this.sessionInfo.wrapupTemperature,
 				maxOutputTokens: this.sessionInfo.wrapupMaxTokens,
 				tips: this.sessionInfo.wrapupTips,
-				prevSessionName: this.sessionInfo.prevSessionName,
+				prevWrapupRef: this.sessionInfo.prevWrapupRef,
 			});
 
 			if (!outlineContent) {
