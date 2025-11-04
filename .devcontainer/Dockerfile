@@ -13,12 +13,12 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1 \
 # Install common deps.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        python3-full python3-setuptools python3-wheel python3-pip \
-        python-is-python3 make g++ build-essential jq curl wget rsync \
+        python3-full python3-pip python3-setuptools python-is-python3 \
+        make g++ build-essential jq curl wget rsync \
         git ffmpeg bash net-tools file cmake make vim less xxd \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --upgrade --no-cache-dir \
-        setuptools wheel uv llama-cpp-python packaging
+        uv llama-cpp-python packaging
 # Delete existing user with UID $USER_ID if it exists then create a new user.
 RUN if getent passwd $USER_ID > /dev/null 2>&1; then \
         EXISTING_USER=$(getent passwd $USER_ID | cut -d: -f1) && \
@@ -36,9 +36,9 @@ RUN if getent passwd $USER_ID > /dev/null 2>&1; then \
     && echo 'source ${NVM_DIR}/nvm.sh' >> /home/$USERNAME/.bashrc
 
 # Install nvm and set up Node.js
-RUN chmod a+rx $NVM_DIR \
+RUN mkdir -p  -m 655 $NVM_DIR \
     && curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh" | bash \
-    && source "$NVM_DIR/nvm.sh" && nvm install lts/jod && nvm alias default lts/jod
+    && . "$NVM_DIR/nvm.sh" && nvm install lts/jod && nvm alias default lts/jod
 
 ### Runtime bases per backend ###
 # CPU base (Python 3.12 slim + PyTorch CPU wheels)
