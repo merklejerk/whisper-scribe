@@ -84,7 +84,7 @@ async function main() {
 						describe: 'Optional profile name to apply config overrides',
 					})
 					.option('session-name', {
-						alias: 's',
+						alias: ['s', 'session'],
 						type: 'string',
 						describe: 'Session name for logging',
 					})

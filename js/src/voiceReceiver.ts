@@ -389,21 +389,47 @@ export async function attachVoiceReceiver(
 		const opusStream = connection.receiver.subscribe(userId, {
 			end: { behavior: EndBehaviorType.AfterInactivity, duration: 250 },
 		});
-		const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
-		activeDecoders.set(userId, decoder);
-		opusStream.pipe(decoder);
-		decoder.on('data', (buf: Buffer) => {
-			// buf PCM16LE stereo 48k
-			const int16 = new Int16Array(buf.buffer, buf.byteOffset, buf.byteLength / 2);
-			segmenter.pushStereo48(userId, int16);
-		});
+
+		let currentDecoder: prism.opus.Decoder | null = null;
+
 		const cleanup = () => {
 			debug(`Stream closed for user ${userId}`);
-			decoder.removeAllListeners('data');
-			decoder.destroy();
+			if (currentDecoder) {
+				currentDecoder.removeAllListeners('data');
+				currentDecoder.destroy();
+				currentDecoder = null;
+			}
 			activeDecoders.delete(userId);
 			void segmenter.flushAll();
 		};
+
+		const createDecoder = () => {
+			const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
+			currentDecoder = decoder;
+			activeDecoders.set(userId, decoder);
+			opusStream.pipe(decoder);
+
+			decoder.on('data', (buf: Buffer) => {
+				// buf PCM16LE stereo 48k
+				const int16 = new Int16Array(buf.buffer, buf.byteOffset, buf.byteLength / 2);
+				segmenter.pushStereo48(userId, int16);
+			});
+
+			decoder.on('error', (e) => {
+				debug(`Opus decoding error for ${userId}: ${e.message}`);
+				decoder.destroy();
+				if (!opusStream.destroyed) {
+					debug(`Recreating decoder for ${userId}`);
+					opusStream.unpipe(decoder);
+					createDecoder();
+				} else {
+					cleanup();
+				}
+			});
+		};
+
+		createDecoder();
+
 		opusStream.once('end', cleanup);
 		opusStream.once('close', cleanup);
 		opusStream.once('error', () => cleanup());

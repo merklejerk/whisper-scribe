@@ -2,19 +2,21 @@
 
 <img src="static/banner.svg" width="300px" alt="WhisperScribe banner" style="display: block; margin: 2em auto">
 
-Self-hosted Discord bot for live, multi-user voice transcription and automated session wrap-ups tailored for tabletop RPGs. It now runs as two cooperating services:
+Self-hosted Discord bot for live, multi-user voice transcription and automated session wrap-ups tailored for tabletop RPGs.
 
-- TypeScript Discord Gateway (Node): joins your voice channel, performs per-user VAD/segmentation, logs text/voice events, serves chat commands, and generates wrap-ups with Gemini.
-- Python ASR Service: runs Whisper (Hugging Face transformers) locally and exposes a WebSocket API for fast, on-device speech-to-text.
+WhisperScribe runs as two cooperating services:
 
-Both services share a simple JSON message protocol over WebSocket and write session artifacts under `data/<SESSION_NAME>/`.
+- TypeScript Discord Gateway (Node): joins a voice channel, decodes Opus, performs per-user VAD/segmentation, logs events, serves in-Discord commands, and generates wrap-ups via Gemini.
+- Python ASR Service: runs Whisper (transformers) locally and exposes a WebSocket API for on-device speech-to-text.
+
+Both services write session artifacts under `data/<SESSION_NAME>/`.
 
 ## Features
 
-- Live, multi-user transcription from Discord voice with robust per-user segmentation
+- Live, multi-user transcription from Discord voice with per-user segmentation
 - Local Whisper STT via transformers (CPU or GPU)
 - Session logging to JSONL and formatted logs-on-demand (`!log`)
-- One-command session wrap-up (`!wrapup`) with Gemini structured output, saved as Markdown
+- One-command session wrap-up (`!wrapup`) via Gemini structured output, saved as Markdown
 - Optional upload of wrap-up + logs to a private GitHub Gist
 - Configurable user aliases and phrase normalization to clean up STT artifacts
 - Profiles to override prompts, vocabulary, and permissions per campaign
@@ -25,52 +27,55 @@ Discord ↔ Node (discord.js) ⇄ WebSocket ⇄ Python (Whisper)
 
 - Node captures per-user audio from Discord, performs VAD/segmentation, and sends finalized mono@16k PCM chunks to Python.
 - Python normalizes/enhances audio, runs Whisper, and streams back transcriptions.
-- Node appends to `data/<session>/log.jsonl`, tracks context, and generates wrap-ups with Gemini on demand.
+- Node appends to `data/<session>/log.jsonl` and generates wrap-ups on demand.
 
 ## Requirements
 
 - Node.js 20+ and npm
 - Python 3.12+ and uv (recommended)
-- For GPU acceleration: a supported PyTorch build for your platform/driver. Otherwise, CPU works with smaller models.
-- Linux/macOS/Windows are fine; Discord voice capture requires Opus decoding (bundled via `@discordjs/opus`).
+- For GPU acceleration: a supported PyTorch build for your platform/driver
 
-## environment
+## Environment
 
-You can run/develop in your host OS or use the provided Dev Containers (recommended):
-
-- Dev Containers: ready-to-use images for `cpu`, `rocm`, and `cuda` backends.
-	1) Copy `.devcontainer/.env.example` to `.devcontainer/.env`.
-	2) Set `BACKEND=cpu`, `rocm`, or `cuda` (CUDA image is currently untested).
-	3) Open the repo in VS Code and “Reopen in Container”. System packages for PyTorch (and friends like Triton) will be preinstalled for the chosen backend.
-
-- Note: the Python service expects certain heavy deps (e.g., torch, triton, etc.) to be available on the `PYTHONPATH`. The devcontainers take care of this for you.
-
-Environment variables (copy `.env.example` to `.env`):
-
-- DISCORD_TOKEN: required for the bot
-- GEMINI_API_KEY: required for wrap-up generation (Node)
-- GITHUB_TOKEN: optional, enables gist uploads
-
-
-## Install & Configure
-
-1) Clone
+Create a `.env` file by copying the example and setting the required secrets:
 
 ```bash
-git clone git@github.com:merklejerk/whisper-scribe.git
-cd whisper-scribe
+cp .env.example .env
 ```
 
-2) Config files
+Important variables:
+
+- `DISCORD_TOKEN` — required for the bot to connect to Discord.
+- `GEMINI_API_KEY` — required to run `!wrapup` and wrapup CLI commands that use Gemini.
+- `GITHUB_TOKEN` — optional; used when `--gist` is specified to upload wrapups.
+
+Secrets are intentionally loaded from environment variables — do not store them in `config.toml`.
+
+## Quickstart (Docker)
+
+1) Prepare configuration files:
 
 ```bash
 cp .env.example .env
 cp config.example.toml config.toml
 ```
 
-Edit `config.toml` as needed (see “Config reference”).
+2) Run everything in one container (ASR + bot):
 
-3) Python ASR service deps (virtual env with system site packages)
+```bash
+VOICE_CHANNEL_ID=1234567890 docker compose up --build all
+```
+
+## Install & Run Locally
+
+1) Prepare configuration files:
+
+```bash
+cp .env.example .env
+cp config.example.toml config.toml
+```
+
+2) Python (ASR) dependencies and build:
 
 ```bash
 cd py
@@ -78,116 +83,105 @@ uv venv --system-site-packages
 uv sync
 ```
 
-4) Node gateway deps and build
+3) Node (bot) dependencies and build:
 
 ```bash
 cd ../js
-npm install && npm run build
+npm ci
+npm run build
 ```
 
-## Run
+4) Start the Python ASR server:
 
 ```bash
-cd py
+cd ../py
 uv run start
 ```
 
-
-2) Start the Node Discord bot
+5) Start the Node Discord bot (in another terminal):
 
 ```bash
-npm run start -- bot <VOICE_CHANNEL_ID> \
-## Run with Docker
-
-This repo now includes production Dockerfiles and docker-compose configs for three backends:
-
-- CPU: docker-compose.cpu.yml
-- NVIDIA CUDA: docker-compose.cuda.yml
-- AMD ROCm: docker-compose.rocm.yml
-
-All variants share settings from docker-compose.base.yml. The Python ASR service listens on ws://0.0.0.0:8771 and the Node bot connects to it.
-
-Before running, copy and edit configuration:
-
-1) Make a config.toml in the repo root (see config.example.toml for fields).
-2) Set environment secrets in .env (see .env.example). At minimum set DISCORD_TOKEN, and optionally GEMINI_API_KEY and GITHUB_TOKEN.
-3) Ensure ./data exists (it will be created on first run if missing).
-
-### CPU
-
-```
-docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml build
-docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml up
+cd js
+npm run start -- bot <VOICE_CHANNEL_ID> --ai-service-url ws://localhost:8771
 ```
 
-### NVIDIA (CUDA)
+## Running with Docker Compose
 
-Requires recent Docker with NVIDIA runtime. On supported installs, the compose file requests gpus: all.
+The repository includes a single `docker-compose.yml` that supports three modes via the `MODE` env var: `asr`, `bot`, and `all`.
 
-```
-docker compose -f docker-compose.base.yml -f docker-compose.cuda.yml build
-docker compose -f docker-compose.base.yml -f docker-compose.cuda.yml up
-```
+- `asr` runs the Python ASR service only
+- `bot` runs the Node bot only
+- `all` runs both ASR and bot in one container (convenient for simple setups)
 
-### AMD (ROCm)
+### Sample commands
 
-Host must expose /dev/kfd and /dev/dri and have ROCm-capable hardware.
+- Run everything in one container:
 
-```
-docker compose -f docker-compose.base.yml -f docker-compose.rocm.yml build
-docker compose -f docker-compose.base.yml -f docker-compose.rocm.yml up
+```bash
+VOICE_CHANNEL_ID=1234567890 docker compose up all
 ```
 
-### Running the bot
+- Run ASR separately, then bot:
 
-You can supply VOICE_CHANNEL_ID as an environment variable to auto-start the bot when containers come up:
-
-```
-VOICE_CHANNEL_ID=1234567890 docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml up
-```
-
-Or exec into the container and run commands directly:
-
-```
-docker compose exec bot node js/dist/index.js bot <VOICE_CHANNEL_ID> --ai-service-url ws://localhost:8771
+```bash
+docker compose up asr
+ASR_HOST=asr ASR_PORT=8771 VOICE_CHANNEL_ID=1234567890 docker compose up bot
 ```
 
-You can also run the other CLI commands inside the bot container:
+If running split services, ensure the bot can reach the ASR service by setting `ASR_HOST` to the ASR service name (e.g., `asr`) and `ASR_PORT` to `8771`.
 
-```
-docker compose exec bot node js/dist/index.js log <SESSION_NAME>
-docker compose exec bot node js/dist/index.js wrapup <SESSION_NAME>
-```
-	--ai-service-url ws://localhost:8771 \
-	--session-name "08.30.25" \
-	--profile example \
-	--prev-session "07.19.25" \
-	--gist \
-	--allowed-commanders 123456789012345678
-```
+### Docker Compose environment variables
 
-Tips:
+Docker Compose reads variables from your shell and from `.env` (the compose file loads it via `env_file: ./.env`).
 
-- Get the voice channel ID from Discord (User Settings → Advanced → Developer Mode; right-click channel → Copy ID).
-- When running without `--session-name`, a UUID is used.
-- If `--gist` is set and `GITHUB_TOKEN` is present, `wrapup.md` and `log.jsonl` are uploaded to a private gist on `!wrapup`.
+Secrets:
 
-### In-Discord commands
+- `DISCORD_TOKEN`: required for `bot`/`all` containers
+- `GEMINI_API_KEY`: required to generate wrapups
+- `GITHUB_TOKEN`: optional; used for gist uploads
+
+Bot runtime variables:
+
+- `VOICE_CHANNEL_ID`: voice channel to join (required for `bot` or `all` if auto-start desired)
+- `SESSION`: adds `--session-name <SESSION>` to the bot CLI
+- `PROFILE`: adds `--profile <PROFILE>` to the bot CLI
+- `GIST`: when truthy (`1|true|yes|on`) the container will pass `--gist` to the bot CLI
+- `PREV_SESSION`: adds `--prev-session <PREV_SESSION>` to the bot CLI
+
+ASR runtime variables:
+
+- `ASR_HOST`: bind host for ASR service (default `0.0.0.0`)
+- `ASR_PORT`: bind port for ASR (default `8771`)
+
+Pass-through arguments:
+
+- `BOT_ARGS`: extra args appended to `node js/dist/index.js bot ...` inside the container
+- `ASR_ARGS`: extra args appended to the Python ASR server invocation
+
+Build/runtime knobs:
+
+- `BACKEND`: Docker build backend (`cpu|cuda|rocm`) — default `cpu`
+- `DEVICE`: Python device selector (`auto|cpu|cuda|rocm`) — default `auto`
+- `UID`/`GID`: container user/group IDs, defaults to `1000`
+- `DEBUG`: if set, debug logging is enabled
+- `HF_HOME`: path on the host to mount for the Hugging Face cache (recommended `$HOME/.cache/huggingface`)
+
+## In-Discord commands
 
 - `!log` — replies with a formatted text log attachment for the current session
-- `!wrapup` — generates a structured wrap-up via Gemini and replies with `wrapup.md`
+- `!wrapup` — generates a structured wrap-up via Gemini and returns `wrapup.md`
 
-Permissions: if `discord.allowed_commanders` (or profile override) is non-empty, only those IDs/tags can run commands.
+Permissions: if `discord.allowed_commanders` (or a profile override) is non-empty, only those IDs may run the commands.
 
-### CLI helpers (Node)
+## CLI helpers (Node)
 
-From `js/` you can operate on recorded sessions without Discord:
+You can operate on recorded sessions from `js/` without connecting to Discord:
 
 ```bash
-# Print formatted log
+# Print a formatted log
 npm run start -- log <SESSION_NAME>
 
-# Generate/refresh wrapup (uses cached file unless --new)
+# Generate/refresh a wrapup (uses cached unless --new)
 npm run start -- wrapup <SESSION_NAME> --profile example --new --gist
 ```
 
@@ -195,40 +189,28 @@ npm run start -- wrapup <SESSION_NAME> --profile example --new --gist
 
 Artifacts are stored under `data/<SESSION_NAME>/`:
 
-- `log.jsonl` — JSON lines: { userId, displayName, startTs, endTs, origin, text }
-- `wrapup.md` — Markdown recap with scenes, quotes, items, developments
+- `log.jsonl` — JSON lines: `{ userId, displayName, startTs, endTs, origin, text }`
+- `wrapup.md` — Markdown recap
 
-## Config reference (config.toml)
+## Config reference (`config.toml`)
 
-See `config.example.toml` for full examples. Highlights:
+See `config.example.toml` for full options. Highlights:
 
 - `[discord]`
-	- `allowed_commanders`: restrict who can run `!log`/`!wrapup`.
+  - `allowed_commanders`: list of user IDs allowed to run bot commands
 - `[net]`
-	- `ai_service_url`: WebSocket URL the Node bot uses (and Python binds to).
-- `[whisper]`
-	- `model`: e.g., `openai/whisper-small.en` for CPU, `whisper-v3-large-turbo` for strong GPUs
-	- `logprob_threshold`, `no_speech_threshold`, `prompt`: base system prompt for Whisper
+  - `ai_service_url`: WebSocket URL the Node bot uses to reach the Python ASR service
+- `[whisper]` / `[whisper]` (Python)
+  - `model`, `logprob_threshold`, `no_speech_threshold`, `prompt`
 - `[voice]` (Node segmenter)
-	- `vad_db_threshold`, `silence_gap_ms`, `vad_frame_ms`, `max_segment_ms`, `min_segment_ms`
+  - `vad_db_threshold`, `silence_gap_ms`, `vad_frame_ms`, `max_segment_ms`, `min_segment_ms`
 - `[wrapup]` (Node wrap-up generator)
-	- `model`: Gemini model id (e.g., `gemini-2.5-flash`)
-	- `tips`, `vocabulary`, `prompt`, `temperature`, `max_output_tokens`
+  - `model`: Gemini model id (e.g., `gemini-2.5-flash`)
+  - `tips`, `vocabulary`, `prompt`, `temperature`, `max_output_tokens`
 - `[userid_map]` / `[phrase_map]`
-	- Map user IDs → aliases; normalize common mis-hearings in logs before wrap-up.
+  - map user IDs → aliases; normalize common mis-hearings in logs before wrap-up
 - `[profile.<name>]`
-	- Per-campaign overrides: `whisper_prompt`, `wrapup_prompt`, `wrapup_tips`, `wrapup_vocabulary`, `allowed_commanders`, and nested `userid_map` / `phrase_map` merges.
-
-Notes:
-
-- The Node gateway appends a rolling text window to the ASR prompt (`[whisper].prompt`) to help resolve pronouns and local context.
-- The Python service ignores `[wrapup]` — wrap-ups are generated entirely on the Node side.
-
-## Model guidance
-
-- CPU-only: prefer `openai/whisper-small.en` for near‑real‑time.
-- GPU (CUDA/MPS/ROCm): prefer `whisper-v3-large-turbo` for best accuracy/performance balance.
-- Set `DEVICE` to force device (e.g., `DEVICE=cuda`) when starting the Python service.
+  - per-campaign overrides for prompts, tips, vocabulary, and allowed commanders
 
 ## License
 
